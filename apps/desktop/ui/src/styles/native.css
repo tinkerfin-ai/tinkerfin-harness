@@ -1,0 +1,25 @@
+@layer desktop-layout {
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+  body { background: var(--color-layer-1); user-select: none; }
+  input, textarea { user-select: text; }
+  .name-error-icon { border: 0; padding: 0; background: transparent; }
+  .name-error-icon:hover { color: var(--color-text-primary); }
+  .name-error-icon:active { background: var(--color-active); }
+  [hidden] { display: none !important; }
+  .workbench { width: 100%; height: 100%; min-height: 360px; box-shadow: none; border-radius: 0; }
+  .workbench > .client-main { grid-column: 2; grid-row: 2; }
+  .native-titlebar-space { grid-column: 1 / -1; height: 40px; background: var(--color-sidebar); }
+  .status-popover { width: 100%; box-shadow: none; }
+  .interface-unavailable { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); color: var(--color-text-secondary); }
+  .modal-backdrop:has(.desktop-update-dialog) { inset: 0; width: 100%; height: 100%; border-radius: 0; }
+  html[data-surface=updater] .modal-backdrop { background: var(--color-layer-1); padding: 0; }
+  html[data-surface=updater] .desktop-update-dialog { width: 100%; box-shadow: none; border-radius: 0; }
+  @media (max-width: 529px) {
+    .workbench { min-height: 500px; }
+    .workbench > .client-main { grid-column: 1; grid-row: 3; }
+  }
+  @media (pointer: coarse) {
+    .native-titlebar-space { height: 48px; }
+    .rail-nav button { min-height: var(--control-lg); min-width: var(--control-lg); }
+  }
+}

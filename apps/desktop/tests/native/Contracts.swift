@@ -37,7 +37,44 @@ struct NativeContracts {
         let arguments = CommandLine.arguments
         let mode = arguments[1]
         let directory = URL(fileURLWithPath: arguments[2])
-        if mode == "credential-cleanup" {
+        if mode == "initialization-recovery" {
+            let state = directory.appendingPathComponent("state")
+            try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+            try Data("invalid".utf8).write(to: state.appendingPathComponent("settings.json"))
+            let model = CompanionModel(state: state, resources: directory)
+            do {
+                do { try await model.restore(); throw ClientError.message("损坏配置被接受") }
+                catch is DecodingError { }
+                let snapshot = DesktopPresentation(model: model).snapshot(surface: .workbench)
+                try require(!snapshot.ready && snapshot.connection == "offline" && snapshot.connectionError == "请检查本机配置后重试", "配置恢复没有提供现有重试入口")
+                try await ConfigurationStore(directory: state).save(SavedConfiguration())
+                try await model.retry()
+                try require(model.ready && model.connection == "unpaired", "修复配置后未恢复连接入口")
+                let duplicate = CompanionModel(state: state, resources: directory)
+                do { try await duplicate.restore(); throw ClientError.message("重复实例被接受") }
+                catch ApplicationLockError.alreadyRunning { }
+                await duplicate.shutdown(); await model.shutdown()
+            } catch { await model.shutdown(); throw error }
+        } else if mode == "update-installation" {
+            try await updateInstallationContract(directory)
+        } else if mode == "update-subprocess" {
+            let runner = UpdateSubprocess()
+            try await runner.run(executable: URL(fileURLWithPath: "/usr/bin/true"), arguments: [])
+            do {
+                try await runner.run(executable: URL(fileURLWithPath: "/usr/bin/false"), arguments: [])
+                throw ClientError.message("重复执行复用了旧退出码")
+            } catch UpdateError.failedProcess { }
+            let running = Task { try await runner.run(executable: directory.appendingPathComponent("child"), arguments: []) }
+            try await feedbackCheckpoint("update-child-started")
+            running.cancel()
+            do { try await running.value; throw ClientError.message("更新子进程取消未传播") }
+            catch is CancellationError { }
+            try await runner.run(executable: URL(fileURLWithPath: "/usr/bin/true"), arguments: [])
+        } else if mode == "update-artifact" {
+            try await updateArtifactContract(directory)
+        } else if mode.hasPrefix("authorization-update-") {
+            try await authorizationUpdateContract(directory, mode: mode)
+        } else if mode == "credential-cleanup" {
             let store = KeychainStore(service: arguments[2])
             try await store.remove(account: "first")
             try await store.remove(account: "second")
@@ -146,36 +183,32 @@ struct NativeContracts {
             }
             try await ConfigurationStore(directory: state).save(saved)
             let model = CompanionModel(state: state, resources: resources)
-            let panel = CompanionPanel(model: model, resources: resources)
+            let presentation = DesktopPresentation(model: model)
             let states = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingNewest(16))
-            let actions = AsyncStream.makeStream(of: CompanionAction?.self, bufferingPolicy: .bufferingNewest(8))
             let authorization = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingNewest(8))
             let subscriptions = [
                 model.$status.sink { states.continuation.yield($0) },
-                panel.$activeAction.sink { actions.continuation.yield($0) },
                 model.$authorizationWaiting.sink { authorization.continuation.yield($0) },
             ]
             defer {
                 for subscription in subscriptions { subscription.cancel() }
-                states.continuation.finish(); actions.continuation.finish(); authorization.continuation.finish()
+                states.continuation.finish(); authorization.continuation.finish()
             }
             var stateUpdates = states.stream.makeAsyncIterator()
-            var actionUpdates = actions.stream.makeAsyncIterator()
             var authorizationUpdates = authorization.stream.makeAsyncIterator()
+            var cancellation: Task<DesktopReply, Never>?
             var attentionCount = 0
             model.attention = { attentionCount += 1 }
             do {
                 try await model.restore()
                 if mode == "retry-feedback" {
-                    try require(model.connection == "connecting" && panel.primaryBusy && panel.primaryLabel == "连接中",
-                        "宿主启动后尚未收到连接结果，却结束了加载反馈")
+                    try require(presentation.snapshot(surface: .workbench).connection == "connecting",
+                        "宿主启动后尚未收到连接结果，却结束了连接反馈")
                     try await feedbackCheckpoint("initial-started")
                     while model.status != "offline" { _ = await stateUpdates.next() }
-                    panel.perform(.retry)
-                    try require(panel.primaryBusy && panel.primaryLabel == "重试中", "点击重试未立即显示按钮加载状态")
-                    while panel.activeAction != nil { _ = await actionUpdates.next() }
+                    try require(await presentation.handle(.retry).ok, "重试请求未接纳")
                     try require(!model.busy && model.retrying && model.connection == "connecting"
-                        && panel.primaryBusy && panel.primaryLabel == "重试中" && !panel.canPerform(.retry),
+                        && presentation.snapshot(surface: .workbench).busy == "retry",
                         "宿主刚启动或旧宿主停止时提前结束了重试反馈")
                     let progress = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingNewest(1))
                     let progressSubscription = model.$status.dropFirst().sink { progress.continuation.yield($0) }
@@ -183,62 +216,114 @@ struct NativeContracts {
                     var progressUpdates = progress.stream.makeAsyncIterator()
                     try await feedbackCheckpoint("retry-started")
                     try require(await progressUpdates.next() == "connecting", "本轮宿主未报告正在连接")
-                    try require(model.retrying && panel.primaryBusy, "连接中的状态错误地结束了本轮重试")
+                    try require(model.retrying, "连接中的状态错误地结束了本轮重试")
                     try await feedbackCheckpoint("retry-result")
                     let expected = fixture.result == "failure" ? "failed" : fixture.result == "exit" ? "offline" : fixture.result
                     while model.status != expected { _ = await stateUpdates.next() }
-                    try require(!model.retrying && !panel.primaryBusy, "真实连接结果没有结束本轮加载反馈")
-                    let action: CompanionAction = fixture.result == "online" ? .openStudio : fixture.result == "unauthorized" ? .startAuthorization : .retry
-                    try require(panel.primaryAction == action, "连接结果没有保留对应的恢复操作")
+                    try require(!model.retrying && presentation.snapshot(surface: .workbench).busy.isEmpty,
+                        "真实连接结果没有结束本轮加载反馈")
+                    let expectedConnection = fixture.result == "online" ? "online" : fixture.result == "unauthorized" ? "revoked" : "offline"
+                    try require(presentation.snapshot(surface: .workbench).connection == expectedConnection,
+                        "连接结果未向界面发布正确状态")
                 } else {
-                    try require(model.authorizationWaiting && panel.primaryBusy && panel.primaryLabel == "授权中"
-                        && panel.canPerform(.cancelAuthorization) && !panel.canPerform(.startAuthorization),
-                        "浏览器授权等待没有持续加载、取消入口或重复操作保护")
+                    try require(model.authorizationWaiting && presentation.snapshot(surface: .workbench).authorizationPhase == "waiting",
+                        "浏览器授权等待没有保持当前阶段")
                     try await feedbackCheckpoint("authorization-started")
-                    try require(model.authorizationWaiting && panel.primaryBusy, "授权 HTTP 尚未结算却结束了加载反馈")
+                    try require(model.authorizationWaiting, "授权HTTP尚未结算却结束了等待")
                     if fixture.result == "cancel-request" {
-                        panel.perform(.cancelAuthorization)
+                        cancellation = Task { await presentation.handle(.cancelAuthorization) }
                         try await feedbackCheckpoint("authorization-cancelling")
-                        try require(panel.activeAction == .cancelAuthorization && panel.primaryBusy && panel.primaryLabel == "授权中",
-                            "取消请求尚未结算却恢复了授权主按钮")
+                        try require(presentation.snapshot(surface: .workbench).authorizationPhase == "cancelling",
+                            "取消请求尚未结算却恢复了授权动作")
                         try await feedbackCheckpoint("authorization-cancel-result")
-                        while panel.activeAction != nil { _ = await actionUpdates.next() }
+                        try require(await cancellation!.value.ok, "授权取消未成功结算")
                     } else {
                         try await feedbackCheckpoint("authorization-result")
                         while model.authorizationWaiting { _ = await authorizationUpdates.next() }
                     }
                     try require(attentionCount == 0, "授权结算自动展开了客户端")
                     if fixture.result == "authorized" {
+                        let snapshot = presentation.snapshot(surface: .workbench)
                         try require(model.saved.pending == nil && model.saved.device != nil
-                            && model.connection == "connecting" && panel.primaryBusy && panel.primaryLabel == "连接中",
-                            "授权已完成但连接未建立时没有继续反馈连接状态")
+                            && snapshot.connection == "connecting" && snapshot.connectionReason == .authorization && !snapshot.connected,
+                            "授权回执被误当作服务已经在线")
                         try await feedbackCheckpoint("authorization-connected")
                         while model.status != "online" { _ = await stateUpdates.next() }
-                        try require(!panel.primaryBusy && panel.primaryAction == .openStudio && attentionCount == 0,
-                            "连接成功没有结束加载或自动展开了客户端")
+                        try require(presentation.snapshot(surface: .workbench).connected && attentionCount == 0,
+                            "连接成功未发布在线状态或自动展开了客户端")
                     } else if fixture.result == "error" {
-                        try require(model.saved.pending != nil && !panel.primaryBusy && panel.primaryLabel == "重试"
-                            && panel.primaryAction == .reopenAuthorization && model.error != nil,
-                            "授权轮询失败后永久加载或丢失恢复入口")
+                        try require(model.saved.pending != nil && !model.authorizationWaiting
+                            && !presentation.snapshot(surface: .workbench).authorizationError.isEmpty,
+                            "授权轮询失败丢失了待授权记录或恢复信息")
                         model.resumeAuthorization()
-                        try require(model.authorizationWaiting && panel.primaryBusy && panel.primaryLabel == "授权中",
-                            "恢复授权没有重新进入加载状态")
+                        try require(model.authorizationWaiting, "恢复授权没有重新进入等待")
                         try await feedbackCheckpoint("authorization-recovery")
                         while model.authorizationWaiting { _ = await authorizationUpdates.next() }
-                        try require(model.saved.pending == nil && !panel.primaryBusy && attentionCount == 0,
+                        try require(model.saved.pending == nil && attentionCount == 0,
                             "恢复后授权终态没有结束等待或自动展开客户端")
                     } else {
-                        try require(model.saved.pending == nil && !panel.primaryBusy && panel.primaryAction == .connectService,
-                            "授权终态未结束等待或无法重新发起授权")
+                        try require(model.saved.pending == nil && presentation.snapshot(surface: .workbench).authorizationPhase == "idle",
+                            "授权终态未结束等待")
                     }
                 }
-                await panel.shutdown(); await model.shutdown()
+                presentation.close(); await model.shutdown()
                 try await credentialStore.remove(account: fixture.account)
             } catch {
-                await panel.shutdown(); await model.shutdown()
+                cancellation?.cancel(); _ = await cancellation?.value
+                presentation.close(); await model.shutdown()
                 try await credentialStore.remove(account: fixture.account)
                 throw error
             }
+        } else if mode == "revocation-success" || mode == "revocation-failure" {
+            let fixture = try JSONDecoder().decode(ConnectionFeedbackFixture.self,
+                from: Data(contentsOf: directory.appendingPathComponent("feedback.json")))
+            let credentials = KeychainStore()
+            _ = try await credentials.create(account: fixture.account)
+            let state = directory.appendingPathComponent("state")
+            var saved = SavedConfiguration()
+            saved.name = "Contract Mac"; saved.connection = ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server)
+            saved.device = PairedDevice(deviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", namespace: "ns_1", name: saved.name)
+            saved.keychainAccount = fixture.account
+            try await ConfigurationStore(directory: state).save(saved)
+            let model = CompanionModel(state: state, resources: directory.appendingPathComponent("resources"))
+            let presentation = DesktopPresentation(model: model)
+            let states = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingNewest(16))
+            let subscription = model.$status.sink { states.continuation.yield($0) }
+            var updates = states.stream.makeAsyncIterator()
+            var revocation: Task<DesktopReply, Never>?
+            do {
+                try await model.restore()
+                while model.status != "online" { _ = await updates.next() }
+                revocation = Task { await presentation.handle(.logout) }
+                try await feedbackCheckpoint("revocation-pending")
+                try require(model.saved.device == saved.device && model.status == "online"
+                    && presentation.snapshot(surface: .workbench).busy == "logout", "撤销回应前改变了原身份或连接")
+                try await feedbackCheckpoint("revocation-result")
+                let result = await revocation!.value
+                let persisted = try await ConfigurationStore(directory: state).read()
+                try require(persisted.connection == saved.connection && persisted.name == saved.name && persisted.permissions == saved.permissions,
+                    "设备自撤销改变了地址、名称或系统工具偏好")
+                if mode == "revocation-success" {
+                    try require(result.ok && model.saved.device == nil && model.status == "unpaired"
+                        && persisted.device == nil && persisted.keychainAccount == nil && persisted.retiredAccounts.isEmpty,
+                        "设备撤销成功后未结清本机身份")
+                    var removed = false
+                    do { _ = try await KeychainStore().read(account: fixture.account) } catch ClientError.credentialUnavailable { removed = true }
+                    try require(removed, "设备撤销成功后钥匙串凭证仍存在")
+                } else {
+                    try require(!result.ok && model.saved.device == saved.device && model.status == "online"
+                        && persisted.device == saved.device && persisted.keychainAccount == fixture.account,
+                        "撤销请求失败改变了原身份或连接")
+                }
+                presentation.close(); await model.shutdown()
+                try await credentials.remove(account: fixture.account)
+            } catch {
+                revocation?.cancel(); _ = await revocation?.value
+                presentation.close(); await model.shutdown()
+                try await credentials.remove(account: fixture.account)
+                throw error
+            }
+            subscription.cancel(); states.continuation.finish()
         } else if mode == "service-cancel" {
             let request = Task { try await ServiceDiscovery().resolve(studio: arguments[2], api: "") }
             try await feedbackCheckpoint("discovery-request")
@@ -311,6 +396,15 @@ struct NativeContracts {
             try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: root)
             do { _ = try await access.prepareProjects(linked); throw ClientError.message("接受了不受信的项目根") }
             catch ClientError.workspaceAccess { }
+        } else if mode == "revocation" {
+            do {
+                try await AuthorizationClient().revoke(server: checkedServer(arguments[2]),
+                    deviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", credential: String(repeating: "b", count: 64))
+                print("revoked")
+            } catch {
+                print((error as? ClientError)?.errorDescription ?? "撤销请求失败")
+            }
+            return
         } else if mode == "authorization" {
             do {
                 let result = try await AuthorizationClient().status(server: checkedServer(arguments[2]),
@@ -355,7 +449,7 @@ struct NativeContracts {
             guard let settled = PanelGeometry(anchor: settledAnchor, screen: launchScreen, contentHeight: 230) else {
                 throw ClientError.message("状态栏窗口落位后没有生成浮层")
             }
-            try require(settled.frame == CGRect(x: 724, y: 712, width: 232, height: 230),
+            try require(settled.frame == CGRect(x: 610, y: 712, width: 346, height: 230),
                 "状态栏窗口落位后没有恢复完整尺寸与边缘对齐")
             for screen in [CGRect(x: 0, y: 40, width: 1512, height: 904), CGRect(x: -1440, y: -900, width: 1440, height: 875)] {
                 for center in [screen.minX + 40, screen.midX, screen.maxX - 40] {
@@ -364,7 +458,7 @@ struct NativeContracts {
                         guard let geometry = PanelGeometry(anchor: anchor, screen: screen, contentHeight: height) else {
                             throw ClientError.message("有效菜单栏位置未生成浮层")
                         }
-                        try require(geometry.frame.width == 232 && screen.contains(geometry.frame), "浮层越过当前屏幕或未使用约定宽度")
+                        try require(geometry.frame.width == 346 && screen.contains(geometry.frame), "浮层越过当前屏幕或未使用约定宽度")
                         try require(geometry.frame.maxY == anchor.minY - 2, "浮层没有贴住菜单栏下边缘")
                         try require(geometry.frame.height == min(height, geometry.maximumContentHeight), "浮层仍包含正文以外的高度")
                         if center <= screen.midX { try require(geometry.frame.minX == anchor.minX, "右侧空间充足时没有按左边对齐") }
@@ -372,125 +466,30 @@ struct NativeContracts {
                     }
                 }
             }
-        } else if mode == "panel-drafts" {
+        } else if mode == "presentation-drafts" {
             let resources = directory.appendingPathComponent("resources")
             try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
             let state = directory.appendingPathComponent("state")
             var saved = SavedConfiguration(); saved.name = "Contract Mac"
             try await ConfigurationStore(directory: state).save(saved)
             let model = CompanionModel(state: state, resources: resources)
-            let panel = CompanionPanel(model: model, resources: resources)
-            let actions = AsyncStream.makeStream(of: CompanionAction?.self, bufferingPolicy: .bufferingNewest(1))
-            let subscription = panel.$activeAction.sink { actions.continuation.yield($0) }
-            defer { subscription.cancel(); actions.continuation.finish() }
-            var actionUpdates = actions.stream.makeAsyncIterator()
-            var closeCount = 0
-            panel.close = { closeCount += 1 }
+            let presentation = DesktopPresentation(model: model)
             do {
                 try await model.restore()
-                try require(panel.showsSettings && !panel.primaryBusy && panel.primaryLabel == "连接",
-                    "未连接首页未提供设置或连接入口")
-                panel.toggleLanguageSelection()
-                try require(!panel.selectingLanguage, "首页打开了设置中的语言选项")
-                panel.perform(.settings)
-                try require(!panel.showsSettings, "设置页仍重复展示设置入口")
-                let previousStatus = model.status
-                panel.toggleLanguageSelection()
-                model.checkPermissions(); panel.publish()
-                try require(panel.selectingLanguage && model.status == previousStatus && model.saved.pending == nil,
-                    "界面刷新关闭了语言选项或语言入口改变了连接")
-                panel.escape()
-                try require(!panel.selectingLanguage && panel.page == .settings && closeCount == 0,
-                    "Escape没有先关闭语言选项并保留设置页")
-                panel.toggleLanguageSelection(); panel.perform(.permissions)
-                try require(!panel.selectingLanguage && panel.page == .permissions, "页面导航留下了语言选项")
-                panel.toggleLanguageSelection()
-                try require(!panel.selectingLanguage, "权限页打开了设置中的语言选项")
-                panel.perform(.settings)
-                panel.toggleLanguageSelection(); panel.dismissLanguageSelection()
-                try require(!panel.selectingLanguage && panel.page == .settings, "关闭语言选项改变了设置页")
-                panel.perform(.reopenAuthorization)
-                try require(panel.page == .home && closeCount == 1 && panel.actionError != nil,
-                    "浏览器授权入口未同步收起浮层并返回首页")
-                panel.perform(.settings)
-                panel.beginNameEditing(); panel.name = "Draft name"; model.checkPermissions(); panel.publish()
-                panel.toggleLanguageSelection(); panel.escape()
-                try require(!panel.selectingLanguage && panel.editingName && panel.name == "Draft name",
-                    "关闭语言选项丢弃了尚未保存的名称草稿")
-                try require(panel.page == .settings && panel.name == "Draft name", "设置草稿或目录取消不正确")
-                try require(try await ConfigurationStore(directory: state).read().name == "Contract Mac", "名称草稿未经确认被保存")
-                panel.perform(.permissions)
-                while let action = await actionUpdates.next() { if action == nil { break } }
-                try require(panel.page == .permissions && !panel.editingName, "直接激活导航没有保存名称并继续原动作")
-                try require(!panel.showsSettings, "桌面权限页仍重复展示设置入口")
-                try require(try await ConfigurationStore(directory: state).read().name == "Draft name", "导航保存没有持久化")
-                panel.escape()
-                panel.perform(.settings)
-                try require(panel.name == "Draft name", "重复打开设置丢失已保存名称")
-                panel.beginNameEditing(); panel.name = "Cancelled draft"
-                panel.escape()
-                try require(panel.page == .settings && !panel.editingName && panel.name == "Draft name", "Escape未取消名称编辑并恢复已保存值")
-                panel.beginNameEditing(); panel.name = "Contract Mac"
-                panel.perform(.home)
-                while let action = await actionUpdates.next() { if action == nil { break } }
-                try require(panel.page == .home && !panel.editingName && panel.name == "Contract Mac", "离开设置没有自动保存名称")
-                panel.perform(.settings)
-
-                panel.beginNameEditing(); panel.name = ""; panel.perform(.saveSettings)
-                try require(panel.activeAction == .saveSettings && !panel.canEditName && panel.canPerform(.home), "名称保存没有保留后续导航入口")
-                panel.perform(.home)
-                panel.escape()
-                try require(panel.editingName && panel.name.isEmpty, "Escape在提交期间丢弃了名称草稿")
-                while let action = await actionUpdates.next() { if action == nil { break } }
-                try require(panel.page == .settings && panel.editingName && panel.name.isEmpty && panel.actionError == .message("请输入设备名称"), "名称保存失败没有保留草稿及错误")
-                try require(model.saved.name == "Contract Mac", "失败的名称提交改变了已保存值")
-                panel.name = "  测试 Mac  "; panel.perform(.saveSettings)
-                panel.perform(.home)
-                while let action = await actionUpdates.next() { if action == nil { break } }
-                try require(!panel.editingName && panel.name == "测试 Mac" && panel.actionError == nil, "名称确认成功后没有结束编辑并显示规范值")
-                try require(try await ConfigurationStore(directory: state).read().name == "测试 Mac", "名称确认没有持久化")
-                try require(panel.page == .home, "失焦保存吞掉了原导航动作")
-                panel.perform(.settings)
-
-                try await model.run {
-                    for action in [CompanionAction.home, .settings, .permissions, .accessibility, .screenCapture, .openStudio, .reopenAuthorization] {
-                        try require(panel.canPerform(action), "无关后台操作禁用了导航或外部入口")
-                    }
-                    panel.beginNameEditing(); panel.name = "Busy draft"
-                    try require(panel.canEditName && panel.canPerform(.saveSettings), "后台写入期间无法排队保存名称")
-                    for action in [CompanionAction.startAuthorization, .cancelAuthorization, .retry] {
-                        try require(!panel.canPerform(action), "后台配置写入期间允许并发操作")
-                    }
-                    try require(panel.activeAction == nil, "后台忙碌被错误归给界面动作")
-                }
-                panel.escape(); panel.perform(.home)
-                panel.perform(.retry)
-                try require(panel.activeAction == .retry && panel.canPerform(.settings) && panel.canPerform(.permissions), "重试改变了无关导航状态")
-                panel.perform(.startAuthorization)
-                try require(panel.activeAction == .retry, "连接覆盖了尚未结束的重试动作")
-                while let action = await actionUpdates.next() { if action == nil { break } }
-
-                panel.perform(.settings); panel.beginNameEditing(); panel.name = ""
-                try require(!(await panel.prepareToQuit()) && panel.editingName, "保存失败仍退出并丢弃草稿")
-                panel.name = "退出前保存"
-                try require(await panel.prepareToQuit(), "退出未结算名称保存")
-                try require(try await ConfigurationStore(directory: state).read().name == "退出前保存", "退出前名称未落盘")
-                panel.perform(.cancelAuthorization)
-                try require(panel.activeAction == .cancelAuthorization && panel.canPerform(.reopenAuthorization), "取消授权的忙碌状态归属不正确")
-                while let action = await actionUpdates.next() { if action == nil { break } }
-
-                do { try await model.run { throw ClientError.message("Connection error") } } catch { }
-                panel.actionError = .message("Field error"); panel.clearFieldError()
-                try require(panel.errors == ["Connection error"], "编辑表单清除了独立连接错误")
-                panel.perform(.settings)
-                panel.perform(.startAuthorization)
-                try require(panel.activeAction == .startAuthorization && panel.canPerform(.settings), "开始连接改变了设置入口状态")
-                try require(panel.page == .home && closeCount == 2 && panel.primaryBusy && panel.primaryLabel == "授权中",
-                    "连接或切换未立即收起设置页、返回首页并展示持续加载")
-                await panel.shutdown()
-                try require(panel.activeAction == nil && model.saved.pending == nil, "退出未收回尚未执行的界面动作")
-                await model.shutdown()
-            } catch { await panel.shutdown(); await model.shutdown(); throw error }
+                let draft = DesktopViewState(page: .account, connectionForm: true, service: "https://example.test",
+                    api: "", manualAPI: false, editingName: true, name: "尚未提交")
+                try presentation.preserve(draft)
+                let snapshot = presentation.snapshot(surface: .workbench)
+                try require(snapshot.resume == draft && snapshot.name == "Contract Mac", "界面草稿覆盖了保存值")
+                let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as! [String: Any]
+                try require(payload["device"] == nil && payload["credential"] == nil && payload["keychainAccount"] == nil,
+                    "界面快照泄漏原生身份存储")
+                try require(!(await presentation.handle(.saveName("不应保存"))).ok, "未授权状态接受了隐藏页面的名称修改")
+                await presentation.prepareToQuit()
+                try require(try await ConfigurationStore(directory: state).read().name == "Contract Mac",
+                    "退出客户端隐式保存了未提交草稿")
+                presentation.close(); await model.shutdown()
+            } catch { presentation.close(); await model.shutdown(); throw error }
         } else if mode == "converted-configuration" {
             let saved = try await ConfigurationStore(directory: directory).read()
             try require(saved.name == "Contract Mac" && saved.permissions.network == .normal && saved.permissions.allowedDomains.isEmpty,
@@ -529,14 +528,6 @@ struct NativeContracts {
                 try require(persisted.permissions == saved.permissions, "取消授权丢失本机目录")
                 await model.shutdown()
             } catch { await model.shutdown(); throw error }
-        } else if mode == "mcp-command" {
-            let arguments = ["/Applications/My Tools/python", "server.py", "--title", "A 'quoted' value", "$HOME", ";"]
-            try require(try parseMCPCommand(displayMCPCommand(arguments)) == arguments, "MCP 命令引号往返失败")
-            try require(try parseMCPCommand("python tools.py --name \"My Tool\"") == ["python", "tools.py", "--name", "My Tool"], "MCP 引号未保留参数")
-            for invalid in ["python 'unfinished", "python \\", "python ''", String(repeating: "x", count: 16385)] {
-                try require((try? parseMCPCommand(invalid)) == nil, "无效 MCP 命令被接受")
-            }
-            try require(try parseMCPCommand("").isEmpty, "空命令未移除 MCP")
         } else if mode == "capture-window" {
             let frame = CGRect(x: 80, y: 414, width: 620, height: 428)
             let title = String(repeating: "文档", count: 300) + "A"
@@ -583,6 +574,48 @@ struct NativeContracts {
             let payload = Data(#"{"kind":"desktop_request","request_id":"request","workspace_scope_id":"scope","command":{"action":"open_url","url":"http://localhost:3000","include_image":false}}"#.utf8)
             guard case .desktopRequest(let request) = try JSONDecoder().decode(HostEvent.self, from: payload) else { throw ClientError.message("网页请求未解码") }
             try require(request.command.url == "http://localhost:3000" && request.command.action == "open_url", "网页打开丢失目标地址")
+        } else if mode.hasPrefix("maintenance-") {
+            let events = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingOldest(8))
+            let backend = BackendProcess(event: { event in
+                if case .state(let state) = event { events.continuation.yield(state) }
+            }, exited: { events.continuation.finish() })
+            var prepared: Task<Void, Error>?
+            do {
+                try await backend.start(configuration: HostConfiguration(server: "https://studio.example.com", deviceID: "device", namespace: "ns_1",
+                    credential: String(repeating: "b", count: 64), workspaceRoot: directory.path, permissions: WorkspacePermissions()),
+                    readiness: NativeReadiness(accessibility: false, screenCapture: false), resources: directory, state: directory)
+                var updates = events.stream.makeAsyncIterator()
+                try require(await updates.next() == "online", "维护测试宿主没有就绪")
+                if mode == "maintenance-wait-cancel" {
+                    prepared = Task { try await backend.prepareForUpdate() }
+                    try require(await updates.next() == "connecting", "维护请求没有到达宿主")
+                    prepared!.cancel()
+                    do { try await prepared!.value; throw ClientError.message("取消没有传播") }
+                    catch is CancellationError { }
+                    try require(backend.isRunning, "取消更新等待关闭了原连接")
+                } else if mode == "maintenance-failure" || mode == "maintenance-exit" {
+                    var rejected = false
+                    do { try await backend.prepareForUpdate() } catch { rejected = true }
+                    try require(rejected, "维护故障没有结束等待")
+                } else {
+                    try await backend.prepareForUpdate()
+                    try require(backend.isRunning, "就绪回执被误当作进程已经退出")
+                    if mode == "maintenance-commit" {
+                        try await backend.commitUpdatePreparation()
+                        try require(!backend.isRunning, "安装提交未等待宿主真正退出")
+                    } else {
+                        try await backend.cancelUpdatePreparation()
+                        try require(backend.isRunning, "取消更新关闭了原连接")
+                        try await backend.prepareForUpdate()
+                        try await backend.cancelUpdatePreparation()
+                    }
+                }
+                await backend.stopAndWait()
+            } catch {
+                prepared?.cancel(); _ = try? await prepared?.value
+                await backend.stopAndWait()
+                throw error
+            }
         } else if mode == "desktop" {
             let payload = Data(#"{"kind":"desktop_request","request_id":"request","workspace_scope_id":"scope","command":{"action":"apps","include_image":false}}"#.utf8)
             let event = try JSONDecoder().decode(HostEvent.self, from: payload)
@@ -643,4 +676,118 @@ struct NativeContracts {
         }
         print("verified \(mode)")
     }
+}
+
+
+private struct AuthorizationUpdateFixture: Decodable {
+    let server: String
+    let oldAccount: String
+    let newAccount: String
+}
+
+/// HTTP回执与旧宿主退出由父进程放行，更新不能提交尚在交接的新身份
+@MainActor
+private func authorizationUpdateContract(_ directory: URL, mode: String) async throws {
+    let fixture = try JSONDecoder().decode(AuthorizationUpdateFixture.self, from: Data(contentsOf: directory.appendingPathComponent("fixture.json")))
+    let keychain = KeychainStore()
+    if mode == "authorization-update-cleanup" {
+        try await keychain.remove(account: fixture.oldAccount)
+        try await keychain.remove(account: fixture.newAccount)
+        return
+    }
+    _ = try await keychain.create(account: fixture.oldAccount)
+    _ = try await keychain.create(account: fixture.newAccount)
+    let state = directory.appendingPathComponent("state")
+    let configuration = ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server)
+    var saved = SavedConfiguration()
+    saved.name = "Contract Mac"; saved.connection = configuration
+    saved.device = PairedDevice(deviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", namespace: "ns_1", name: saved.name)
+    saved.keychainAccount = fixture.oldAccount
+    saved.pending = PendingConnection(account: fixture.newAccount, connection: configuration,
+        authorization: AuthorizationCreated(authorizationID: "cccccccc-cccc-cccc-cccc-cccccccccccc", browserToken: String(repeating: "b", count: 64), expiresAt: "2100-01-01T00:00:00Z"))
+    try await ConfigurationStore(directory: state).save(saved)
+    let model = CompanionModel(state: state, resources: directory.appendingPathComponent("resources"))
+    let changes = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingNewest(16))
+    let subscription = model.$status.sink { changes.continuation.yield($0) }
+    var iterator = changes.stream.makeAsyncIterator()
+    do {
+        try await model.restore(); try await model.retry()
+        while model.status != "online" { _ = await iterator.next() }
+        if mode == "authorization-update-check" { try model.beginUpdateSession() }
+        try await feedbackCheckpoint("old-online")
+        if mode == "authorization-update-stop" {
+            while model.status != "offline" { _ = await iterator.next() }
+        }
+        let release = Task { @MainActor in try await feedbackCheckpoint("maintenance-entered") }
+        try await model.prepareForUpdate()
+        try await release.value
+        try require(model.saved.device?.deviceID == saved.device?.deviceID, "更新准备提交了尚未交接的新身份")
+        try require(model.saved.pending == nil, "安装准备保留了待授权请求")
+        let persisted = try await ConfigurationStore(directory: state).read()
+        try require(persisted.device == saved.device && persisted.pending == nil, "更新准备的持久化身份不一致")
+        await keychain.clear()
+        try require((try? await keychain.read(account: fixture.newAccount)) == nil, "更新准备保留了放弃授权的凭证")
+        try await model.resumeAfterUpdate()
+        while model.status != "online" { _ = await iterator.next() }
+        await model.shutdown()
+    } catch { await model.shutdown(); throw error }
+    subscription.cancel(); changes.continuation.finish()
+}
+
+
+private struct UpdateArtifactFixture: Decodable {
+    struct Case: Decodable { let manifest: Data; let signature: Data; let valid: Bool }
+    let publicKey: Data
+    let cases: [Case]
+    let tree: String
+    let app: String
+}
+
+@MainActor
+private func updateArtifactContract(_ directory: URL) async throws {
+    let fixture = try JSONDecoder().decode(UpdateArtifactFixture.self, from: Data(contentsOf: directory.appendingPathComponent("update-contract.json")))
+    for value in fixture.cases {
+        let accepted = (try? DesktopRelease.verify(manifest: value.manifest, signature: value.signature, publicKey: fixture.publicKey)) != nil
+        try require(accepted == value.valid, "更新清单签名或应用身份校验错误")
+    }
+    let digest = try await UpdateFileWork().perform { cancellation in
+        try UpdateTree.digest(URL(fileURLWithPath: fixture.app), cancellation: cancellation)
+    }
+    try require(digest == fixture.tree, "原生文件树摘要与发布工具不一致")
+    try require(try DesktopReleaseVersion("0.1.10") > DesktopReleaseVersion("0.1.9"), "发行版本排序错误")
+    try require(!UpdateTransfer.permitted(URL(string: "http://github.com/download")!), "更新允许不加密传输")
+    try require(!UpdateTransfer.permitted(URL(string: "https://github.com.evil.test/download")!), "更新允许外部重定向")
+}
+
+
+private struct UpdateInstallationFixture: Decodable, Sendable {
+    let handoff: UpdateHandoff
+    let publicKey: Data
+    let manifest: Data
+    let signature: Data
+    let cancelled: Bool
+    let installed: Bool
+    let interrupt: Bool
+}
+
+@MainActor
+private func updateInstallationContract(_ directory: URL) async throws {
+    let fixture = try JSONDecoder().decode(UpdateInstallationFixture.self, from: Data(contentsOf: directory.appendingPathComponent("installation.json")))
+    try require((try? UpdateWorkspace.checkInstallationLocation(fixture.handoff.target, state: fixture.handoff.target.appendingPathComponent("state"))) == nil,
+        "更新允许将用户状态目录随应用替换")
+    do {
+        try await UpdateFileWork().perform { cancellation in
+            let handoff = try fixture.handoff.checked(in: fixture.handoff.directory)
+            let release = try DesktopRelease.verify(manifest: fixture.manifest, signature: fixture.signature, publicKey: fixture.publicKey)
+            if fixture.cancelled { cancellation.cancel() }
+            let lock = try UpdateTargetLock(application: handoff.target)
+            try UpdateInstallation.install(handoff, release: release, lock: lock, cancellation: cancellation) { percent in
+                if fixture.interrupt && percent == 65 { _exit(41) }
+            }
+        }
+        try require(fixture.installed, "更新本应拒绝不安全安装")
+    } catch {
+        if fixture.installed { throw error }
+    }
+    try UpdateInstallation.checkIdentity(fixture.handoff.target, version: fixture.installed ? "0.1.2" : "0.1.1")
 }

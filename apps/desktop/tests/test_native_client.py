@@ -129,6 +129,162 @@ async def test_native_process_owns_start_messages_and_all_stop_waiters(
     assert await run_contract(swift_contracts, mode, tmp_path) == f"verified {mode}"
 
 
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "maintenance-cancel",
+        "maintenance-wait-cancel",
+        "maintenance-commit",
+        "maintenance-failure",
+        "maintenance-exit",
+    ],
+)
+async def test_native_maintenance_receipts_cancellation_and_process_exit(
+    swift_contracts, tmp_path, mode
+):
+    executable = tmp_path / "python/bin/python3"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(
+        f"#!{Path(sys.executable).resolve()}\n"
+        "import json, sys\n"
+        f"mode = {mode!r}\n"
+        "assert json.loads(sys.stdin.readline())['kind'] == 'initialize'\n"
+        "print(json.dumps({'kind':'state','state':'online'}), flush=True)\n"
+        "for line in sys.stdin:\n"
+        "    message = json.loads(line)\n"
+        "    kind = message['kind']\n"
+        "    if kind == 'stop': break\n"
+        "    assert set(message) == {'kind','request_id'}\n"
+        "    request = message['request_id']\n"
+        "    assert len(request) == 32\n"
+        "    if kind == 'maintenance_prepare':\n"
+        "        if mode == 'maintenance-exit': break\n"
+        "        if mode == 'maintenance-wait-cancel':\n"
+        "            print(json.dumps({'kind':'state','state':'connecting'}), flush=True)\n"
+        "            continue\n"
+        "        state = 'failed' if mode == 'maintenance-failure' else 'ready'\n"
+        "    else:\n"
+        "        assert kind in {'maintenance_cancel','maintenance_commit'}\n"
+        "        state = 'cancelled' if kind == 'maintenance_cancel' else 'committed'\n"
+        "    print(json.dumps({'kind':'maintenance','request_id':'f'*32,'state':'failed'}), flush=True)\n"
+        "    print(json.dumps({'kind':'maintenance','request_id':request,'state':state}), flush=True)\n"
+        "    if state == 'committed': break\n"
+    )
+    executable.chmod(0o700)
+    assert await run_contract(swift_contracts, mode, tmp_path) == f"verified {mode}"
+
+
+@pytest.mark.companion_integration
+@pytest.mark.parametrize("mode", ["revocation-success", "revocation-failure"])
+async def test_native_device_revoke_commits_or_preserves_local_identity(
+    swift_contracts, tmp_path, mode
+):
+    requests: asyncio.Queue[asyncio.Future] = asyncio.Queue(maxsize=1)
+    connections: set[asyncio.Task] = set()
+
+    async def respond(reader, writer):
+        try:
+            header = await reader.readuntil(b"\r\n\r\n")
+            length = next(
+                (
+                    int(line.partition(b":")[2])
+                    for line in header.lower().split(b"\r\n")
+                    if line.startswith(b"content-length:")
+                ),
+                0,
+            )
+            await reader.readexactly(length)
+            if header.startswith(b"GET /api/devices/projects "):
+                status, body = (
+                    200,
+                    {
+                        "code": 0,
+                        "data": {
+                            "account_name": "contract",
+                            "items": [],
+                            "next_cursor": None,
+                        },
+                    },
+                )
+            else:
+                assert header.startswith(b"DELETE /api/devices/current ")
+                assert (
+                    b"authorization: bearer aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa."
+                    in header.lower()
+                )
+                response = asyncio.get_running_loop().create_future()
+                await requests.put(response)
+                status, body = await response
+            content = json.dumps(body).encode()
+            writer.write(
+                f"HTTP/1.1 {status} Test\r\nConnection: close\r\nContent-Length: {len(content)}\r\n\r\n".encode()
+                + content
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    def connected(reader, writer):
+        connections.add(asyncio.create_task(respond(reader, writer)))
+
+    server = await asyncio.start_server(connected, "127.0.0.1", 0)
+    account = str(uuid4())
+    port = server.sockets[0].getsockname()[1]
+    (tmp_path / "feedback.json").write_text(
+        json.dumps(
+            {"account": account, "server": f"http://127.0.0.1:{port}", "result": mode}
+        )
+    )
+    executable = tmp_path / "resources/python/bin/python3"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(
+        f"#!{Path(sys.executable).resolve()}\n"
+        "import json, sys\n"
+        "assert json.loads(sys.stdin.readline())['kind'] == 'initialize'\n"
+        "print(json.dumps({'kind':'state','state':'online'}), flush=True)\n"
+        "for line in sys.stdin:\n"
+        "    if json.loads(line)['kind'] == 'stop': break\n"
+        "print(json.dumps({'kind':'state','state':'stopped'}), flush=True)\n"
+    )
+    executable.chmod(0o700)
+    process = await asyncio.create_subprocess_exec(
+        str(swift_contracts),
+        mode,
+        str(tmp_path),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        assert process.stdout is not None and process.stdin is not None
+        assert await process.stdout.readline() == b"checkpoint revocation-pending\n"
+        response = await requests.get()
+        process.stdin.write(b"revocation-pending\n")
+        await process.stdin.drain()
+        assert await process.stdout.readline() == b"checkpoint revocation-result\n"
+        response.set_result(
+            (200, {"code": 0, "data": None})
+            if mode == "revocation-success"
+            else (503, {"code": 1})
+        )
+        process.stdin.write(b"revocation-result\n")
+        await process.stdin.drain()
+        stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert stdout.decode().strip() == f"verified {mode}"
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        server.close()
+        await server.wait_closed()
+        for task in connections:
+            task.cancel()
+        await asyncio.gather(*connections, return_exceptions=True)
+        await run_contract(swift_contracts, "feedback-cleanup", tmp_path)
+
+
 async def run_feedback_contract(
     binary: Path, directory: Path, mode: str, result: str
 ) -> None:
@@ -372,9 +528,10 @@ async def test_native_authorization_feedback_covers_completion_failure_and_cance
 
 
 @pytest.mark.parametrize(
-    ("status", "body", "expected"),
+    ("mode", "status", "body", "expected"),
     [
         (
+            "authorization",
             200,
             {
                 "code": 0,
@@ -390,11 +547,12 @@ async def test_native_authorization_feedback_covers_completion_failure_and_cance
             },
             '"namespace":"ns_1"',
         ),
-        (410, {"code": 1001012001}, "授权已过期"),
-        (404, {"detail": "Not Found"}, "本机连接服务暂不可用"),
-        (404, {"code": 1001012000}, "授权已过期"),
-        (302, {"code": 0}, "连接尚未完成"),
+        ("authorization", 410, {"code": 1001012001}, "授权已过期"),
+        ("authorization", 404, {"detail": "Not Found"}, "本机连接服务暂不可用"),
+        ("authorization", 404, {"code": 1001012000}, "授权已过期"),
+        ("authorization", 302, {"code": 0}, "连接尚未完成"),
         (
+            "authorization",
             200,
             {
                 "code": 0,
@@ -410,10 +568,15 @@ async def test_native_authorization_feedback_covers_completion_failure_and_cance
             },
             "设备身份无效",
         ),
+        ("revocation", 200, {"code": 0, "data": None}, "revoked"),
+        ("revocation", 200, {"code": 0, "data": {}}, "连接尚未完成"),
+        ("revocation", 200, {"code": 0}, "连接尚未完成"),
+        ("revocation", 401, {"code": 1}, "连接已失效"),
+        ("revocation", 302, {"code": 0}, "连接尚未完成"),
     ],
 )
-async def test_native_authorization_identity_errors_and_redirect_refusal(
-    swift_contracts, status, body, expected
+async def test_native_authorization_and_revocation_responses_and_redirect_refusal(
+    swift_contracts, mode, status, body, expected
 ):
     requests = []
     connections: set[asyncio.Task] = set()
@@ -447,16 +610,23 @@ async def test_native_authorization_identity_errors_and_redirect_refusal(
     server = await asyncio.start_server(connect, "127.0.0.1", 0)
     try:
         port = server.sockets[0].getsockname()[1]
-        result = await run_contract(
-            swift_contracts, "authorization", f"http://127.0.0.1:{port}"
-        )
+        result = await run_contract(swift_contracts, mode, f"http://127.0.0.1:{port}")
         assert expected in result
         assert len(requests) == 1
         header, content = requests[0]
-        assert header.startswith(
-            b"POST /api/devices/authorizations/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/status HTTP/1.1"
-        )
-        assert content["credential"] == "b" * 64
+        if mode == "authorization":
+            assert header.startswith(
+                b"POST /api/devices/authorizations/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/status HTTP/1.1"
+            )
+            assert content["credential"] == "b" * 64
+        else:
+            assert header.startswith(b"DELETE /api/devices/current HTTP/1.1")
+            assert content == {}
+            assert (
+                b"Authorization: Bearer aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa."
+                + b"b" * 64
+                in header
+            )
         assert b"cookie:" not in header.lower()
     finally:
         server.close()
@@ -522,15 +692,6 @@ async def test_native_capture_requires_unique_complete_window_identity(
     )
 
 
-async def test_native_mcp_command_preserves_argv_without_shell_expansion(
-    swift_contracts, tmp_path
-):
-    assert (
-        await run_contract(swift_contracts, "mcp-command", tmp_path)
-        == "verified mcp-command"
-    )
-
-
 @pytest.mark.companion_integration
 async def test_native_connection_failures_expose_the_matching_recovery(
     swift_contracts, tmp_path
@@ -567,12 +728,21 @@ async def test_menu_bar_panel_tracks_icon_and_fits_each_screen(
     )
 
 
-async def test_native_panel_preserves_form_drafts_and_independent_errors(
+async def test_native_presentation_preserves_drafts_without_implicit_save(
     swift_contracts, tmp_path
 ):
     assert (
-        await run_contract(swift_contracts, "panel-drafts", tmp_path)
-        == "verified panel-drafts"
+        await run_contract(swift_contracts, "presentation-drafts", tmp_path)
+        == "verified presentation-drafts"
+    )
+
+
+async def test_native_initialization_can_retry_and_identifies_duplicate_instances(
+    swift_contracts, tmp_path
+):
+    assert (
+        await run_contract(swift_contracts, "initialization-recovery", tmp_path)
+        == "verified initialization-recovery"
     )
 
 

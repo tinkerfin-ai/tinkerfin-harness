@@ -14,7 +14,11 @@ final class KeychainStore: @unchecked Sendable {
     private func perform<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
-                do { continuation.resume(returning: try operation()) }
+                do {
+                    // 文件钥匙串的创建路径不保证遵守LAContext，禁止后台等待系统授权窗口
+                    guard SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { throw ClientError.credentialUnavailable }
+                    continuation.resume(returning: try operation())
+                }
                 catch { continuation.resume(throwing: error) }
             }
         }
@@ -67,6 +71,30 @@ final class KeychainStore: @unchecked Sendable {
             credentials[account] = value
             return value
         } } catch { throw ClientError.credentialUnavailable }
+    }
+
+    /// 新条目只信任当前应用与已核验目标代码，取消更新和原子替换后均可读取同一设备凭证
+    func createForUpdate(account: String, existingAccount: String, application: URL) async throws {
+        try await perform { [self] in
+            guard let secret = try credentials[existingAccount] ?? Self.find(service: service, account: existingAccount) else {
+                throw ClientError.credentialUnavailable
+            }
+            var current: SecTrustedApplication?, next: SecTrustedApplication?
+            guard SecTrustedApplicationCreateFromPath(nil, &current) == errSecSuccess,
+                  SecTrustedApplicationCreateFromPath(application.path, &next) == errSecSuccess,
+                  let current, let next else { throw ClientError.message("无法确认更新应用身份") }
+            var access: SecAccess?
+            guard SecAccessCreate("TinkerFin 设备连接" as CFString, [current, next] as CFArray, &access) == errSecSuccess,
+                  let access else { throw ClientError.message("无法保留更新后的设备凭证") }
+            let status = SecItemAdd([
+                kSecClass: kSecClassGenericPassword, kSecUseDataProtectionKeychain: false,
+                kSecAttrService: service, kSecAttrAccount: account,
+                kSecAttrLabel: "TinkerFin 设备连接", kSecAttrAccess: access,
+                kSecValueData: Data(secret.utf8), kSecUseAuthenticationContext: Self.noInteraction(),
+            ] as CFDictionary, nil)
+            guard status == errSecSuccess else { throw ClientError.message("设备凭证尚未保存到 Keychain，请解锁钥匙串后重试") }
+            credentials[account] = secret
+        }
     }
 
     func remove(account: String) async throws {

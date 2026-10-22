@@ -12,9 +12,13 @@ from pathlib import Path
 from .host import CompanionHost, ConnectionState
 from .installation import Installation
 from .lifecycle import settle
+from .maintenance import MaintenanceControl
 from .native import (
     DesktopReply,
     Initialize,
+    MaintenanceCancel,
+    MaintenanceCommit,
+    MaintenancePrepare,
     NativeChannel,
     ReadinessChanged,
     StdioChannel,
@@ -29,6 +33,7 @@ async def serve(channel: StdioChannel, installation: Installation, state: Path) 
     if not isinstance(initial, Initialize):
         raise TypeError("本机启动消息缺少设备初始化")
     native = NativeChannel(channel.send, readiness=initial.readiness)
+    maintenance: MaintenanceControl | None = None
 
     async def report(status: ConnectionState) -> None:
         await channel.send({"kind": "state", "state": status})
@@ -42,6 +47,12 @@ async def serve(channel: StdioChannel, installation: Installation, state: Path) 
             elif isinstance(message, ReadinessChanged):
                 if native.update_readiness(message.readiness):
                     await host.refresh_capabilities()
+            elif isinstance(
+                message, (MaintenancePrepare, MaintenanceCancel, MaintenanceCommit)
+            ):
+                assert maintenance is not None
+                if await maintenance.receive(message):
+                    return
             else:
                 raise TypeError("同一进程不能重复初始化设备身份")
 
@@ -62,6 +73,7 @@ async def serve(channel: StdioChannel, installation: Installation, state: Path) 
             native=native,
             report=report,
         ) as host:
+            maintenance = MaintenanceControl(host, channel.send)
             tasks = (
                 asyncio.create_task(host.run()),
                 asyncio.create_task(control()),
@@ -79,10 +91,15 @@ async def serve(channel: StdioChannel, installation: Installation, state: Path) 
                     task.cancel()
                 await settle(asyncio.gather(*tasks, return_exceptions=True))
     finally:
-        native.close()
-        for kind in signals:
-            loop.remove_signal_handler(kind)
-            signal.signal(kind, previous[kind])
+        # 先由宿主关闭工作端和资源，再释放维护，提交后的接纳门禁没有空隙
+        try:
+            if maintenance is not None:
+                await maintenance.close()
+        finally:
+            native.close()
+            for kind in signals:
+                loop.remove_signal_handler(kind)
+                signal.signal(kind, previous[kind])
 
 
 async def run(resources: Path, state: Path) -> int:

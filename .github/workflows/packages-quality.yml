@@ -238,6 +238,9 @@ jobs:
           version: "0.12.13"
           enable-cache: true
           python-version: "3.14.7"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.8.0"
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.3"
@@ -245,12 +248,22 @@ jobs:
           cache-dependency-path: apps/desktop/runtime/package-lock.json
       - run: uv sync --locked --all-packages
       - run: npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
+      - name: Verify independent desktop interface
+        working-directory: apps/desktop/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm test
+          pnpm build
+          pnpm exec playwright install webkit
+          pnpm test:browser
       - name: Check desktop code and native contracts
         run: |
           uv run ruff check --no-cache apps/desktop
           uv run ruff format --no-cache --check apps/desktop
           uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
+          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 $(rg --files apps/desktop/native -g '*.swift' -g '!CompanionApp.swift')
           uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
 
   quality-gate:

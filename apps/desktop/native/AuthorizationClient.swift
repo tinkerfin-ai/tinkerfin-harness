@@ -54,7 +54,16 @@ struct AuthorizationResult: Decodable, Sendable {
 private struct AuthorizationStart: Encodable { let name: String; let credential: String }
 private struct AuthorizationProof: Encodable { let credential: String }
 private struct DeviceName: Encodable { let name: String }
-private struct Envelope<Value: Decodable>: Decodable { let code: Int; let data: Value? }
+private struct Envelope<Value: Decodable>: Decodable { let code: Int; let data: Value }
+private struct ResponseCode: Decodable { let code: Int }
+private struct EmptyResponse: Decodable, Sendable {
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer()
+        guard value.decodeNil() else {
+            throw DecodingError.dataCorruptedError(in: value, debugDescription: "撤销响应必须为空")
+        }
+    }
+}
 
 final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -129,18 +138,19 @@ struct AuthorizationClient: Sendable {
             guard content.count < 128 * 1024 else { throw ClientError.message("Studio 响应超过容量") }
             content.append(byte)
         }
-        let envelope = try? JSONDecoder().decode(Envelope<Value>.self, from: content)
-        guard response.statusCode == 200,
-              let result = envelope, result.code == 0,
-              let value = result.data else {
-            if response.statusCode == 410 || response.statusCode == 404 && envelope?.code == 1_001_012_000 {
+        guard response.statusCode == 200 else {
+            let code = try? JSONDecoder().decode(ResponseCode.self, from: content).code
+            if response.statusCode == 410 || response.statusCode == 404 && code == 1_001_012_000 {
                 throw ClientError.authorizationExpired
             }
             if response.statusCode == 404 { throw ClientError.message("本机连接服务暂不可用") }
             if response.statusCode == 401 { throw ClientError.message("连接已失效，请重新连接") }
             throw ClientError.message("连接尚未完成，请检查网络后重试")
         }
-        return value
+        guard let result = try? JSONDecoder().decode(Envelope<Value>.self, from: content), result.code == 0 else {
+            throw ClientError.message("连接尚未完成，请检查网络后重试")
+        }
+        return result.data
     }
 
     func start(server: URL, name: String, credential: String) async throws -> AuthorizationCreated {
@@ -176,6 +186,14 @@ struct AuthorizationClient: Sendable {
         try validateDevice(value)
         guard value.deviceID == deviceID else { throw ClientError.message("Studio 返回了其他设备身份") }
         return value
+    }
+
+    /// 只撤销当前设备；已撤销凭证可重复确认，不调用浏览器账号退出接口
+    func revoke(server: URL, deviceID: String, credential: String) async throws {
+        try validateCredential(credential)
+        guard UUID(uuidString: deviceID) != nil else { throw ClientError.message("设备身份无效") }
+        let _: EmptyResponse = try await request(server: server, path: "current", body: [String: String](),
+            method: "DELETE", token: deviceID + "." + credential)
     }
 
     private func validateCredential(_ credential: String) throws {

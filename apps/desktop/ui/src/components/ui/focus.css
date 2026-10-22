@@ -1,0 +1,3 @@
+@layer utilities {
+  [data-ui-focus-restored]:focus, [data-ui-focus-restored]:focus::before, [data-ui-focus-restored]:focus::after { outline: 0; box-shadow: none; }
+}

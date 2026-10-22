@@ -80,8 +80,16 @@ def test_bundled_menu_bar_resources_and_client_url_scheme(app_bundle):
     app_icon = (resources / metadata["CFBundleIconFile"]).read_bytes()
     assert app_icon[:4] == b"icns"
     assert int.from_bytes(app_icon[4:8], "big") == len(app_icon)
-    assert not (resources / "ui").exists()
-    brand = source.parent / "studio-web/public/brand/tinkerfin.svg"
+    assert (resources / "ui/index.html").is_file()
+    assert (resources / "ui/THIRD_PARTY_NOTICES.txt").stat().st_size > 0
+    assert (resources / "licenses/desktop-ui.txt").read_bytes() == (
+        resources / "ui/THIRD_PARTY_NOTICES.txt"
+    ).read_bytes()
+    assert (resources / "TinkerFinUpdater").is_file()
+    assert (resources / "update_archive.py").read_bytes() == (
+        source / "scripts/update_archive.py"
+    ).read_bytes()
+    brand = source / "ui/public/brand.svg"
     assert (resources / "brand.svg").read_bytes() == brand.read_bytes()
     for language in ("en", "zh-Hans"):
         catalog = Path(f"{language}.lproj/Localizable.strings")
@@ -89,10 +97,9 @@ def test_bundled_menu_bar_resources_and_client_url_scheme(app_bundle):
             source / "resources" / catalog
         ).read_bytes()
     expected_icons = {
-        path.name: path.read_bytes()
-        for path in (source / "resources/icons").glob("*.pdf")
+        path.name: path.read_bytes() for path in (source / "resources/icons").iterdir()
     }
-    assert len(expected_icons) == 12
+    assert "log-out.svg" in expected_icons
     assert {
         path.name: path.read_bytes() for path in (resources / "icons").iterdir()
     } == expected_icons

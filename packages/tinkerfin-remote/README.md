@@ -66,6 +66,21 @@ async with ToolWorker(
 
 Reconnect by calling `serve` again on the same worker. Detaching delivery does not stop accepted work. `wait_idle()` joins accepted operations; closing the worker cancels and joins owned execution before releasing workspace managers. Both engines remain owned by the application.
 
+For a graceful restart or maintenance, pause new work while keeping delivery
+attached so accepted uploads, cancellation and results can finish:
+
+```python
+async with worker.maintenance():
+    await hand_over_to_replacement()
+```
+
+Entering the context waits for accepted execution and workspace preparation.
+New work receives a durable rejection; an existing request keeps its original
+outcome when replayed. Leaving or cancelling the context resumes admission unless
+the worker has closed. One maintenance owner is allowed at a time. The host owns
+the replacement or maintenance action; prepared workspaces remain borrowed until
+their normal owner closes them.
+
 Configure driver and database deadlines on both borrowed engines. Cancellation and shutdown wait for already accepted SQL to settle, including cursor cleanup and commit acknowledgment. A driver receive timeout bounds an inactive network read; it is not a total statement deadline. Close `RemoteTools` and `ToolWorker` before disposing their engines; their close methods reject new ledger calls and join accepted ones.
 
 Tools receive a real `ToolContextArg` with workspace access and `await runtime.emit_output(value)`. Return JSON content or ordinary LangChain tool messages. Graph state, model access, Store injection and Graph commands do not cross this boundary. Declare path arguments using `tinkerfin_contracts.FilePath` so the cloud resolves targets before approval and the worker checks them again before execution.

@@ -333,7 +333,9 @@ class Ledger:
         return row
 
     @owned_io
-    async def command(self, envelope: CommandEnvelope) -> None:
+    async def command(
+        self, envelope: CommandEnvelope, *, accept_new: bool = True
+    ) -> None:
         async with self.transaction() as conn:
             command = envelope.command
             if envelope.command_id != digest(command):
@@ -404,6 +406,17 @@ class Ledger:
                             compacted=False,
                         )
                     )
+                    if not accept_new:
+                        await self._item(
+                            conn,
+                            "workspace",
+                            WorkspaceEvent(
+                                command_id=envelope.command_id,
+                                session_id=request.session_id,
+                                error="Remote worker is paused for maintenance",
+                            ),
+                            group=request.session_id,
+                        )
                 elif text_field(row, "digest") != digest(request):
                     raise RemoteError(
                         RemoteErrorCode.CONFLICT,
@@ -533,6 +546,18 @@ class Ledger:
                             binary_bytes=0,
                         )
                     )
+                    if not accept_new:
+                        # Persist the refusal with admission so supervision can
+                        # never execute a request rejected by maintenance.
+                        await self._receive_event(
+                            conn,
+                            OperationEvent(
+                                operation_id=request.operation_id,
+                                sequence=1,
+                                kind="failed",
+                                message="Remote worker is paused for maintenance",
+                            ),
+                        )
                 elif text_field(row, "digest") != digest(request):
                     raise RemoteError(
                         RemoteErrorCode.CONFLICT,

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import zstandard
 from runtime_inputs import DEFAULT_CACHE, NODE, PYTHON, digest, obtain
+from update_archive import create_archive
 
 ROOT = Path(__file__).resolve().parents[3]
 DESKTOP = ROOT / "apps/desktop"
@@ -340,10 +341,17 @@ def sign(app: Path, identity: str, temporary: Path) -> None:
 
 
 def install_interface(resources: Path) -> None:
-    """签名前安装界面图标和语言资源，服务地址由用户在应用中配置"""
+    """从桌面自有依赖构建离线界面，签名前安装字体、许可、图标和语言资源"""
+    interface = DESKTOP / "ui"
+    run("pnpm", "install", "--frozen-lockfile", cwd=interface)
+    run("pnpm", "build", cwd=interface)
+    shutil.copytree(interface / "dist", resources / "ui")
+    shutil.copy2(interface / "public/brand.svg", resources / "brand.svg")
     shutil.copy2(
-        ROOT / "apps/studio-web/public/brand/tinkerfin.svg", resources / "brand.svg"
+        interface / "dist/THIRD_PARTY_NOTICES.txt",
+        resources / "licenses/desktop-ui.txt",
     )
+    shutil.copy2(DESKTOP / "scripts/update_archive.py", resources / "update_archive.py")
     shutil.copytree(DESKTOP / "resources/icons", resources / "icons")
     for language in ("en", "zh-Hans"):
         shutil.copytree(
@@ -431,6 +439,22 @@ def build(
             "-o",
             executable,
         )
+        run(
+            "swiftc",
+            "-swift-version",
+            "6",
+            "-O",
+            "-target",
+            "arm64-apple-macosx15.0",
+            *sorted(
+                path
+                for path in (DESKTOP / "native").glob("*.swift")
+                if path.name != "CompanionApp.swift"
+            ),
+            DESKTOP / "native/installer/InstallerApp.swift",
+            "-o",
+            resources / "TinkerFinUpdater",
+        )
         # 所有链接必须位于应用中，防止把构建机目录当成安装依赖
         for path in app.rglob("*"):
             if path.is_symlink() and not path.resolve().is_relative_to(app):
@@ -460,7 +484,7 @@ def build(
     run("codesign", "--verify", "--deep", "--strict", output)
     run(output / "Contents/Resources/python/bin/pip3", "--version")
     archive = output.with_suffix(".zip")
-    run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", output, archive)
+    create_archive(output, archive)
     archive.with_suffix(".zip.sha256").write_text(
         f"{digest(archive)}  {archive.name}\n"
     )

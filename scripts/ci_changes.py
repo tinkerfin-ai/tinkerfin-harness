@@ -132,7 +132,6 @@ def select_checks(
         and _runtime_change(path)
         or path
         in {
-            "apps/studio-web/public/brand/tinkerfin.svg",
             ".github/workflows/desktop-release.yml",
             "scripts/build_wheels.py",
         }

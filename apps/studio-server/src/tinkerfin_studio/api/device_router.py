@@ -432,6 +432,25 @@ async def rename_device(
     return _private_response(device)
 
 
+@router.delete("/current", response_model=ApiResponse[None])
+async def revoke_current_device(
+    request: Request, token: RawTokenDep
+) -> ApiResponse[None]:
+    """撤销调用设备并停止其后续执行接入，不修改浏览器账号会话"""
+    resources = get_resources(request.app)
+    principal = await DeviceService(resources.database).revoke_current(token)
+    await resources.remote_tools.endpoint(
+        namespace=principal.namespace, target=principal.device_id
+    ).revoke()
+    await notify_change(
+        resources.notifications,
+        user_id=principal.user_id,
+        topic="studio.devices.changed",
+        key=principal.device_id,
+    )
+    return ApiResponse.success()
+
+
 @router.get("", response_model=ApiResponse[list[DeviceView]])
 async def list_devices(
     request: Request, user: NetworkUserDep

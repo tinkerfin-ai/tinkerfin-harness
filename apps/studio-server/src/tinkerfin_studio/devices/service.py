@@ -386,7 +386,7 @@ class DeviceService:
     def _principal(device: Device) -> DevicePrincipal:
         return DevicePrincipal(device.device_id, device.user_id, device.name)
 
-    async def _authenticated(
+    async def _credential_device(
         self, session: AsyncSession, token: str | None, *, lock: bool = False
     ) -> Device:
         if token is None or re.fullmatch(r"[0-9a-f-]{36}\.[0-9a-f]{64}", token) is None:
@@ -394,11 +394,17 @@ class DeviceService:
         device_id, credential = token.split(".", 1)
         query = select(Device).where(Device.device_id == device_id)
         device = await session.scalar(query.with_for_update() if lock else query)
-        if (
-            device is None
-            or device.revoked_at is not None
-            or not hmac.compare_digest(device.credential_digest, _digest(credential))
+        if device is None or not hmac.compare_digest(
+            device.credential_digest, _digest(credential)
         ):
+            raise BusinessException(DeviceErrorCode.UNAUTHORIZED)
+        return device
+
+    async def _authenticated(
+        self, session: AsyncSession, token: str | None, *, lock: bool = False
+    ) -> Device:
+        device = await self._credential_device(session, token, lock=lock)
+        if device.revoked_at is not None:
             raise BusinessException(DeviceErrorCode.UNAUTHORIZED)
         user = await session.get(User, device.user_id)
         if user is None or user.disabled:
@@ -516,3 +522,13 @@ class DeviceService:
             if device.revoked_at is None:
                 device.revoked_at = self._time()
                 device.connection_id = None
+
+    async def revoke_current(self, token: str | None) -> DevicePrincipal:
+        """凭设备密钥撤销自身，重复请求只确认撤销结果，不恢复任何访问权"""
+        async with self._session() as session:
+            # 撤销提交后响应可能丢失；保留凭证摘要只用于确认同一设备的重试
+            device = await self._credential_device(session, token, lock=True)
+            if device.revoked_at is None:
+                device.revoked_at = self._time()
+            device.connection_id = None
+            return self._principal(device)
