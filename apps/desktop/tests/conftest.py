@@ -65,8 +65,9 @@ def tls_context(tmp_path, monkeypatch):
     return context
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def swift_contracts(tmp_path_factory) -> Path:
+    """会话共享只读契约程序，调用方各自创建运行进程与状态目录"""
     if sys.platform != "darwin" or not shutil.which("swiftc"):
         pytest.skip("原生客户端契约需要 macOS Swift SDK")
     companion = Path(__file__).resolve().parents[1]

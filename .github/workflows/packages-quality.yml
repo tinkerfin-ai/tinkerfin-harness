@@ -257,7 +257,7 @@ jobs:
           pnpm build
           pnpm exec playwright install webkit
           pnpm test:browser
-      - name: Check desktop code and native contracts
+      - name: Check desktop code and native types
         run: |
           uv run ruff check --no-cache apps/desktop
           uv run ruff format --no-cache --check apps/desktop
@@ -268,7 +268,10 @@ jobs:
             if [[ "$native_source" != */CompanionApp.swift ]]; then native_sources+=("$native_source"); fi
           done
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 "${native_sources[@]}" apps/desktop/native/installer/InstallerApp.swift
-          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
+      - name: Test desktop and system interface contracts
+        run: uv run pytest apps/desktop/tests -q --durations=10
+      - name: Test isolated macOS sandbox contracts
+        run: uv run pytest packages/tinkerfin-sandbox/tests/native -q -n 2 --dist=loadfile --durations=10
 
   quality-gate:
     name: Quality gate
