@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -21,6 +22,7 @@ from typing import Literal
 from uuid import uuid4
 
 import pytest
+from apps.desktop.scripts import release_signing
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -454,3 +456,143 @@ def test_keychain_rejects_other_signer_and_records_cross_build_access(
                 sort_keys=True,
             )
         )
+
+
+@pytest.mark.parametrize("ending", ["complete", "exception", "cancel", "crash"])
+def test_release_signing_session_cleans_owned_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ending: str
+):
+    __tracebackhide__ = True
+    if not isolated_runner():
+        pytest.skip("正式签名生命周期只在真实 GitHub 托管 runner 验证")
+    process: subprocess.Popen[str] | None = None
+    with monkeypatch.context() as configured:
+        # 仅替换发布配置；钥匙串、签名和清理均调用正式实现
+        configured.setenv("GITHUB_JOB", "release")
+        scope = release_signing.runner_scope()
+        state = scope.temporary / (
+            f"tinkerfin-release-signing-{scope.run_id}-{scope.attempt}"
+        )
+        if state.exists():
+            pytest.fail("签名状态已被占用，拒绝接管其他运行的资源", pytrace=False)
+        before_search = release_signing.keychain_list()
+        before_default = release_signing.default_keychain()
+        before_user = release_signing.trust_snapshot(tmp_path, admin=False)
+        before_admin = release_signing.trust_snapshot(tmp_path, admin=True)
+        password = secrets.token_hex(32)
+        pem, container, fingerprint = certificate(
+            tmp_path, f"TF-session-{uuid4().hex[:12]}", password
+        )
+        configured.setattr(release_signing, "CERTIFICATE", pem)
+        configured.setattr(
+            release_signing, "BUNDLE_ID", "com.tinkerfin.signing-experiment"
+        )
+        keychain = state / "owned.keychain-db"
+        app: Path | None = None
+        try:
+            configured.setenv(
+                "DESKTOP_CODE_SIGNING_P12",
+                base64.b64encode(container.read_bytes()).decode(),
+            )
+            configured.setenv("DESKTOP_CODE_SIGNING_PASSWORD", password)
+            if ending in {"complete", "exception"}:
+                try:
+                    with release_signing.SigningSession(state) as identity:
+                        assert identity.fingerprint == fingerprint
+                        assert identity.keychain == keychain and keychain.is_file()
+                        assert release_signing.keychain_list() == [
+                            *before_search,
+                            str(keychain),
+                        ]
+                        assert not (state / "identity.p12").exists()
+                        assert all(
+                            name not in os.environ
+                            for name in release_signing.SECRET_NAMES
+                        )
+                        if ending == "exception":
+                            raise RuntimeError("受控构建失败")
+                        desktop = Path(__file__).resolve().parents[1]
+                        app = build_app(
+                            tmp_path,
+                            "A",
+                            "1",
+                            desktop / "tests/native/SigningIdentityContracts.swift",
+                        )
+                        configured.syspath_prepend(str(desktop / "scripts"))
+                        builder = importlib.import_module("build_macos")
+                        builder.sign(
+                            app,
+                            identity.fingerprint,
+                            tmp_path,
+                            keychain=identity.keychain,
+                            timestamp=False,
+                        )
+                except RuntimeError as error:
+                    if ending != "exception" or str(error) != "受控构建失败":
+                        raise
+                assert not state.exists()
+                if ending == "complete":
+                    assert app is not None
+                    release_signing.verify(app)
+            else:
+                child = (
+                    "import sys\n"
+                    "from pathlib import Path\n"
+                    "sys.path.insert(0, sys.argv[1])\n"
+                    "import release_signing as signing\n"
+                    "signing.CERTIFICATE = Path(sys.argv[2])\n"
+                    "try:\n"
+                    "    with signing.SigningSession(Path(sys.argv[3])):\n"
+                    "        print('ready', flush=True)\n"
+                    "        sys.stdin.readline()\n"
+                    "except KeyboardInterrupt:\n"
+                    "    sys.exit(130)\n"
+                )
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-c",
+                        child,
+                        str(Path(__file__).resolve().parents[1] / "scripts"),
+                        str(pem),
+                        str(state),
+                    ],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                assert process.stdout is not None
+                assert process.stdout.readline() == "ready\n"
+                if ending == "cancel":
+                    process.terminate()
+                else:
+                    process.kill()
+                process.wait()
+                _, stderr = process.communicate()
+                assert process.returncode == (
+                    130 if ending == "cancel" else -signal.SIGKILL
+                ), stderr
+                if ending == "cancel":
+                    assert not state.exists()
+                else:
+                    assert state.is_dir() and keychain.is_file()
+                    release_signing.cleanup(state)
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+            try:
+                release_signing.cleanup(state)
+            finally:
+                container.unlink(missing_ok=True)
+        assert not state.exists() and not keychain.exists()
+        assert release_signing.keychain_list() == before_search
+        assert release_signing.default_keychain() == before_default
+        assert release_signing.trust_snapshot(tmp_path, admin=False) == before_user
+        assert release_signing.trust_snapshot(tmp_path, admin=True) == before_admin
