@@ -110,7 +110,7 @@ describe('前端源码契约', () => {
   it('产品短提示不以句号结尾，设备连接说明保留完整句子', () => {
     const deviceParagraphs = new Set([
       '在客户端完成授权后，刷新连接状态。', '连接后即可使用已授权的本机资源。',
-      '请在客户端完成连接，然后刷新设备状态。', '撤销后将无法访问此设备，再次使用需重新授权。',
+      '撤销后将无法访问此设备，再次使用需重新授权。',
     ])
     const invalidCopy: string[] = []
     for (const [path, source] of productionSources) {

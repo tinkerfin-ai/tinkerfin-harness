@@ -1,4 +1,4 @@
-"""Build and launch a desktop app that matches this worktree's current sources."""
+"""Build the current desktop sources and reveal the app for replacement installation."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def main() -> None:
     subprocess.run(("codesign", "--verify", "--deep", "--strict", str(app)), check=True)
     print(app)
     if not args.build_only:
-        subprocess.run(("open", str(app)), check=True)
+        subprocess.run(("open", "-R", str(app)), check=True)
 
 
 if __name__ == "__main__":

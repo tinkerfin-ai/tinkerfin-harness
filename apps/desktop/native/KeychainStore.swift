@@ -2,7 +2,7 @@ import Foundation
 import LocalAuthentication
 import Security
 
-/// Keychain 的同步系统调用只在独占工作队列执行，不阻塞界面或共享凭证给子进程
+/// Keychain 同步调用只在独占工作队列执行，凭证缓存只属于当前进程
 final class KeychainStore: @unchecked Sendable {
     private let service: String
     private let queue = DispatchQueue(label: "com.tinkerfin.companion.keychain")
@@ -73,18 +73,19 @@ final class KeychainStore: @unchecked Sendable {
         } } catch { throw ClientError.credentialUnavailable }
     }
 
-    /// 新条目只信任当前应用与已核验目标代码，取消更新和原子替换后均可读取同一设备凭证
-    func createForUpdate(account: String, existingAccount: String, application: URL) async throws {
+    /// 接收方用自身代码身份创建条目，设备密钥仅由更新父进程经匿名管道传入
+    func receiveForUpdate(account: String, secret: String) async throws {
         try await perform { [self] in
-            guard let secret = try credentials[existingAccount] ?? Self.find(service: service, account: existingAccount) else {
-                throw ClientError.credentialUnavailable
+            guard secret.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { throw ClientError.credentialUnavailable }
+            if let existing = try Self.find(service: service, account: account) {
+                guard existing == secret else { throw ClientError.credentialUnavailable }
+                return
             }
-            var current: SecTrustedApplication?, next: SecTrustedApplication?
+            var current: SecTrustedApplication?
             guard SecTrustedApplicationCreateFromPath(nil, &current) == errSecSuccess,
-                  SecTrustedApplicationCreateFromPath(application.path, &next) == errSecSuccess,
-                  let current, let next else { throw ClientError.message("无法确认更新应用身份") }
+                  let current else { throw ClientError.message("无法确认更新应用身份") }
             var access: SecAccess?
-            guard SecAccessCreate("TinkerFin 设备连接" as CFString, [current, next] as CFArray, &access) == errSecSuccess,
+            guard SecAccessCreate("TinkerFin 设备连接" as CFString, [current] as CFArray, &access) == errSecSuccess,
                   let access else { throw ClientError.message("无法保留更新后的设备凭证") }
             let status = SecItemAdd([
                 kSecClass: kSecClassGenericPassword, kSecUseDataProtectionKeychain: false,
@@ -93,23 +94,49 @@ final class KeychainStore: @unchecked Sendable {
                 kSecValueData: Data(secret.utf8), kSecUseAuthenticationContext: Self.noInteraction(),
             ] as CFDictionary, nil)
             guard status == errSecSuccess else { throw ClientError.message("设备凭证尚未保存到 Keychain，请解锁钥匙串后重试") }
+            guard try Self.find(service: service, account: account) == secret else { throw ClientError.credentialUnavailable }
             credentials[account] = secret
         }
     }
 
     func remove(account: String) async throws {
         try await perform { [self] in
-            credentials.removeValue(forKey: account)
-            let status = SecItemDelete([
-                kSecClass: kSecClassGenericPassword,
-                kSecUseDataProtectionKeychain: false,
-                kSecAttrService: service,
-                kSecAttrAccount: account,
-                kSecUseAuthenticationContext: Self.noInteraction(),
-            ] as CFDictionary)
-            guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw ClientError.message("设备凭证未能从 Keychain 删除，请解锁钥匙串后重试")
+            if try Self.find(service: service, account: account) != nil {
+                try Self.delete(service: service, account: account)
             }
+            credentials.removeValue(forKey: account)
+        }
+    }
+
+    /// 删除辅助入口也须证明持有同一设备密钥，不能仅凭公开账户ID借用代码权限
+    func removeForUpdate(account: String, secret: String) async throws {
+        try await perform { [self] in
+            guard let existing = try Self.find(service: service, account: account) else { return }
+            let left = Array(existing.utf8), right = Array(secret.utf8)
+            guard left.count == right.count, zip(left, right).reduce(UInt8(0), { $0 | ($1.0 ^ $1.1) }) == 0 else {
+                throw ClientError.credentialUnavailable
+            }
+            try Self.delete(service: service, account: account)
+            credentials.removeValue(forKey: account)
+        }
+    }
+
+    // 调用方须先验证读取权限；按精确条目引用删除，避免查询式删除的owner-edit失败
+    private static func delete(service: String, account: String) throws {
+        var item: CFTypeRef?
+        let found = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword, kSecUseDataProtectionKeychain: false,
+            kSecAttrService: service, kSecAttrAccount: account,
+            kSecReturnRef: true, kSecMatchLimit: kSecMatchLimitOne,
+            kSecUseAuthenticationContext: noInteraction(),
+        ] as CFDictionary, &item)
+        if found == errSecItemNotFound { return }
+        guard found == errSecSuccess, let item, CFGetTypeID(item) == SecKeychainItemGetTypeID() else {
+            throw ClientError.credentialUnavailable
+        }
+        let status = SecKeychainItemDelete(item as! SecKeychainItem)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw ClientError.message("设备凭证未能从 Keychain 删除，请解锁钥匙串后重试")
         }
     }
 

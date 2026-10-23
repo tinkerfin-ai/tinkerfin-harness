@@ -3,6 +3,29 @@ import Foundation
 
 enum UpdateError: Error { case invalidManifest, invalidArchive, invalidLocation, failedProcess, unavailable }
 
+/// 只向界面提供恢复操作所需的原因，不传递路径、请求地址或底层错误正文
+enum DesktopUpdateFailure: String, Codable, Sendable {
+    case none, network, storage, release, unavailable
+
+    init(error: Error) {
+        if let error = error as? UpdateError {
+            switch error {
+            case .invalidLocation: self = .storage
+            case .invalidManifest, .invalidArchive, .unavailable: self = .release
+            case .failedProcess: self = .unavailable
+            }
+        } else if error is DecodingError {
+            self = .release
+        } else {
+            let detail = error as NSError
+            if detail.domain == NSURLErrorDomain { self = .network }
+            else if detail.domain == NSPOSIXErrorDomain || detail.domain == NSCocoaErrorDomain
+                && (NSFileErrorMinimum...NSFileErrorMaximum).contains(detail.code) { self = .storage }
+            else { self = .unavailable }
+        }
+    }
+}
+
 struct DesktopReleaseVersion: Comparable, Sendable {
     let components: [Int]
     init(_ value: String) throws {

@@ -21,6 +21,7 @@ export interface UpdateState {
   percent: number
   currentVersion: string
   targetVersion: string
+  failure: 'none' | 'network' | 'storage' | 'release' | 'unavailable'
 }
 
 export interface DesktopState {

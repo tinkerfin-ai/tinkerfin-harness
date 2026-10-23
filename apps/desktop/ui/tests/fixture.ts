@@ -9,7 +9,7 @@ export function fixture(patch: Partial<DesktopState> = {}): DesktopState {
     name: '研究用 Mac', account: 'yunsan', version: '0.1.1', busy: '',
     projects: [{ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: '量化研究' }, { id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', name: '市场报告' }],
     projectsLoading: false, openingProject: '', permissions: { accessibility: false, screenCapture: true },
-    update: { phase: 'idle', percent: 0, currentVersion: '0.1.1', targetVersion: '0.1.2' }, resume: null,
+    update: { phase: 'idle', percent: 0, currentVersion: '0.1.1', targetVersion: '0.1.2', failure: 'none' }, resume: null,
     ...patch,
   }
 }

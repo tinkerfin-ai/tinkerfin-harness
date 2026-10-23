@@ -1,4 +1,4 @@
-import { ExternalLink, Laptop, Link2Off, RefreshCw } from 'lucide-react'
+import { ExternalLink, Laptop, Link2, Link2Off, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button, FeedbackState, IconButton, Surface } from '../../components/ui'
 import { useI18n } from '../../i18n'
@@ -42,9 +42,7 @@ function DeviceSettingsContent({ devices }: { devices: ReturnType<typeof useDevi
   }
   const online = Boolean(currentDevice?.online && devices.status === 'ready')
   const waiting = connecting && !online
-  const openClient = () => { openDeviceClient(); if (!online) setConnecting(true) }
-  const refreshMessage = devices.refreshing ? t('正在刷新设备状态')
-    : devices.refreshed && devices.status === 'ready' ? t(online ? '设备已连接' : '刷新完成，尚未连接设备') : null
+  const openClient = () => { openDeviceClient(); if (!currentDevice) setConnecting(true) }
   return <SettingsPanelLayout label={t('设置')}>
     <section className="local-resources device-settings settings-section" aria-labelledby="device-settings-title">
       <div className="lr-content-heading">
@@ -64,7 +62,10 @@ function DeviceSettingsContent({ devices }: { devices: ReturnType<typeof useDevi
             <span className="lr-card-device-name">{currentDevice.name}</span>
             <span className={`lr-status${online ? '' : ' lr-status-offline'}`} role="status"><span className={`lr-dot${online ? '' : ' lr-dot-offline'}`} aria-hidden="true" />{t(online ? '已连接' : '未连接')}</span>
           </div>
-          {!revokeTarget && <div className="lr-device-actions"><Button ref={revokeButton} type="button" className="lr-revoke-button" leadingIcon={<Link2Off size={14} />} disabled={busy || devices.refreshing || devices.status !== 'ready'} onClick={() => setRevoking(currentDevice.device_id)}>{t('撤销授权')}</Button></div>}
+          {!revokeTarget && <div className="lr-device-actions">
+            {!online && <Button type="button" className="lr-action" leadingIcon={<Link2 size={14} />} disabled={busy} onClick={openDeviceClient}>{t('重连')}</Button>}
+            <Button ref={revokeButton} type="button" className="lr-revoke-button" leadingIcon={<Link2Off size={14} />} disabled={busy || devices.refreshing || devices.status !== 'ready'} onClick={() => setRevoking(currentDevice.device_id)}>{t('撤销授权')}</Button>
+          </div>}
         </div>
         {revokeTarget && <div className="lr-revoke-confirm" role="group" aria-label={t('撤销授权')}>
           <p>{t('撤销后将无法访问此设备，再次使用需重新授权。')}</p>
@@ -85,9 +86,8 @@ function DeviceSettingsContent({ devices }: { devices: ReturnType<typeof useDevi
         <div className="lr-setup-links">
           <span className="lr-download-note">{t('尚未安装？')}<a className="lr-download-link" href="https://github.com/tinkerfin-ai/tinkerfin-harness/releases/latest/download/TinkerFin.zip" target="_blank" rel="noopener noreferrer">{t('下载客户端')}</a></span>
         </div>
-        <span className="lr-empty-note" role="status">{refreshMessage ?? t(waiting ? '设备连接成功后会显示在这里' : '在客户端登录同一账号并完成授权')}</span>
+        <span className="lr-empty-note" role="status">{t(waiting ? '设备连接成功后会显示在这里' : '在客户端登录同一账号并完成授权')}</span>
       </Surface>}
-      {currentDevice && (refreshMessage || waiting) && <p className="lr-waiting-note" role="status">{refreshMessage ?? t('请在客户端完成连接，然后刷新设备状态。')}</p>}
     </section>
   </SettingsPanelLayout>
 }

@@ -7,8 +7,7 @@ export function useDevices() {
     devices: LocalDevice[]
     status: 'loading' | 'ready' | 'error'
     refreshing: boolean
-    refreshed: boolean
-  }>({ devices: [], status: 'loading', refreshing: false, refreshed: false })
+  }>({ devices: [], status: 'loading', refreshing: false })
   const refresh = useRef<(() => void) | null>(null)
   useEffect(() => {
     let active = true
@@ -22,27 +21,26 @@ export function useDevices() {
         finally {
           if (active && signal.aborted) {
             requested = false
-            setValue(current => ({ ...current, refreshing: false, refreshed: false }))
+            setValue(current => ({ ...current, refreshing: false }))
           }
         }
       },
       update: devices => {
-        const refreshed = refreshRead
-        if (refreshed) requested = false
-        setValue(current => ({ devices, status: 'ready', refreshing: requested, refreshed: refreshed || current.refreshed }))
+        if (refreshRead) requested = false
+        setValue({ devices, status: 'ready', refreshing: requested })
       },
       matches: change => change.topic === 'studio.devices.changed',
       // 在线状态有服务端有效期；可见页面定期核对，断线不推断任务已停止
       refreshWhile: devices => devices.some(device => !device.revoked),
       onError: () => {
         if (refreshRead) requested = false
-        setValue(current => ({ ...current, status: 'error', refreshing: requested, refreshed: false }))
+        setValue(current => ({ ...current, status: 'error', refreshing: requested }))
       },
     })
     refresh.current = () => {
       if (requested) return
       requested = true
-      setValue(current => ({ ...current, refreshing: true, refreshed: false }))
+      setValue(current => ({ ...current, refreshing: true }))
       subscription.refresh()
     }
     return () => { active = false; subscription.close(); refresh.current = null }

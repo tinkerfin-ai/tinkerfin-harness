@@ -17,6 +17,26 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
+async def test_native_first_update_workspace_privacy_cleanup_and_failure_reasons(
+    swift_contracts, tmp_path
+):
+    process = await asyncio.create_subprocess_exec(
+        str(swift_contracts),
+        "update-workspace",
+        str(tmp_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert stdout.decode().strip() == "verified update-workspace"
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+
+
 @pytest.fixture(scope="module")
 def archive_tools():
     path = Path(__file__).resolve().parents[1] / "scripts/update_archive.py"

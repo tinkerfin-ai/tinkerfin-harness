@@ -28,6 +28,7 @@ const english: Record<string, string> = {
   '正在重新启动': 'Restarting', '未能重新启动': 'Couldn’t restart', '已更新至 {version}': 'Updated to {version}',
   '是否更新？更新后将重新启动': 'Update now? The app will restart', '当前版本 {version}': 'Current version {version}',
   '请检查网络后重试': 'Check your network and try again', '请重新下载安装包': 'Download the update again',
+  '请检查磁盘空间和目录权限': 'Check disk space and folder permissions', '更新文件不可用，请稍后重试': 'Update files unavailable. Try again later',
   '当前版本仍可使用': 'Your current version is still available', '下载进度': 'Download progress', '安装进度': 'Installation progress',
   '完成': 'Done', '关闭': 'Close', '稍后': 'Later', '立即更新': 'Update now', '重试': 'Try again',
   '重新下载': 'Download again', '重新启动': 'Restart', '关闭对话框': 'Close dialog', '加载中': 'Loading',

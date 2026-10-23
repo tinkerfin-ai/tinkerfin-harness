@@ -70,9 +70,15 @@ final class DesktopUpdateController {
         operation = Task { defer { operation = nil }; await work() }
     }
 
-    private func set(_ phase: DesktopUpdatePhase, percent: Double = 0) {
+    private func set(_ phase: DesktopUpdatePhase, percent: Double = 0, failure: DesktopUpdateFailure = .none) {
         presentation.update = DesktopUpdateState(phase: phase, percent: percent, currentVersion: version,
-            targetVersion: selected?.release.version ?? presentation.update.targetVersion)
+            targetVersion: selected?.release.version ?? presentation.update.targetVersion, failure: failure)
+    }
+
+    private func fail(_ phase: DesktopUpdatePhase, error: Error) {
+        let failure = DesktopUpdateFailure(error: error), detail = error as NSError
+        NSLog("TinkerFin 更新失败：stage=%@ reason=%@ domain=%@ code=%ld", phase.rawValue, failure.rawValue, detail.domain, detail.code)
+        set(phase, failure: failure)
     }
 
     private func check() async {
@@ -80,7 +86,7 @@ final class DesktopUpdateController {
             selected = try await DesktopReleaseService.check(current: version)
             try Task.checkCancellation(); set(selected == nil ? .latest : .available)
         } catch is CancellationError { }
-        catch { set(.checkError) }
+        catch { fail(.checkError, error: error) }
     }
 
     private func download() async {
@@ -101,12 +107,13 @@ final class DesktopUpdateController {
             try Task.checkCancellation(); set(.verifying)
             await verifyAndInstall()
         } catch is CancellationError { }
-        catch { set(.downloadError) }
+        catch { fail(.downloadError, error: error) }
     }
 
     private func verifyAndInstall() async {
         guard let selected, let directory else { set(.verifyError); return }
         do {
+            try await cancelPreparedCredential(directory)
             try await files.perform { cancellation in
                 let archive = directory.appendingPathComponent("TinkerFin.zip")
                 guard try UpdateTree.fileDigest(archive, cancellation: cancellation) == selected.release.archiveSHA256 else { throw UpdateError.invalidArchive }
@@ -139,7 +146,6 @@ final class DesktopUpdateController {
             try await presentation.finishAcceptedActions()
             try await model.prepareForUpdate()
             try Task.checkCancellation()
-            try await model.prepareUpdateCredential(application: directory.appendingPathComponent("unpacked/TinkerFin.app"))
             let handoff = UpdateHandoff(identifier: directory.lastPathComponent, stateDirectory: model.stateDirectory.path,
                 application: Bundle.main.bundleURL.path, currentVersion: version, targetVersion: release.version,
                 currentTreeSHA256: currentTree,
@@ -153,6 +159,7 @@ final class DesktopUpdateController {
                 if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
                 try FileManager.default.copyItem(at: helper, to: target)
             }
+            try await model.prepareUpdateCredential(handoff: handoff)
             try await model.commitUpdatePreparation()
             try Task.checkCancellation(); set(.installing)
             let installer = UpdateInstallerProcess(); self.installer = installer
@@ -172,7 +179,7 @@ final class DesktopUpdateController {
                     return try UpdateTree.digest(target, cancellation: cancellation) == selected.release.treeSHA256
                 }) ?? false
             }
-            set(installed ? .restartError : presentation.update.phase == .verifying ? .verifyError : .installError)
+            fail(installed ? .restartError : presentation.update.phase == .verifying ? .verifyError : .installError, error: error)
         }
     }
 
@@ -182,14 +189,23 @@ final class DesktopUpdateController {
             let installer = UpdateInstallerProcess(); self.installer = installer
             try await installer.install(directory: directory, lock: lock, restarting: true) { _ in }
             try await installer.requestRestart(); hasTransferredRestart = true; restart?()
-        } catch { await installer?.close(); installer = nil; set(.restartError) }
+        } catch { await installer?.close(); installer = nil; fail(.restartError, error: error) }
     }
 
     private func cleanup() async throws {
         guard let directory else { return }
+        if !installed { try await cancelPreparedCredential(directory) }
         let root = model.updateDirectory
         try await files.perform { _ in try UpdateWorkspace.remove(directory, root: root) }
         self.directory = nil
+    }
+
+    private func cancelPreparedCredential(_ directory: URL) async throws {
+        let handoff = try await files.perform { _ -> UpdateHandoff? in
+            guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("credentials.json").path) else { return nil }
+            return try UpdateHandoff.read(directory)
+        }
+        if let handoff { try await model.settleUpdateCredential(handoff, installed: false) }
     }
 
     func restoreHandoff() async throws {
@@ -197,14 +213,14 @@ final class DesktopUpdateController {
         let state = model.stateDirectory, current = Bundle.main.bundleURL.standardizedFileURL, version = version
         let arguments = CommandLine.arguments
         let specified = arguments.firstIndex(of: "--update-receipt").flatMap { arguments.indices.contains($0 + 1) ? URL(fileURLWithPath: arguments[$0 + 1]) : nil }
-        let recovery = try await files.perform { _ -> (UpdateHandoff?, Bool) in
+        let recovery = try await files.perform { _ -> (UpdateHandoff?, Bool, UpdateTargetLock?) in
             try UpdateWorkspace.resumeCleanup(root: state.appendingPathComponent("state/updates"))
             let busy = try UpdateTargetLock.isBusy(application: current)
             let pending = state.appendingPathComponent("state/updates/pending.json")
             let directory: URL
             if let specified { directory = specified }
             else {
-                guard FileManager.default.fileExists(atPath: pending.path) else { return (nil, busy) }
+                guard FileManager.default.fileExists(atPath: pending.path) else { return (nil, busy, nil) }
                 let receipt = try JSONDecoder().decode(UpdateInstallReceipt.self, from: UpdateWorkspace.read(pending, limit: 4096))
                 guard receipt.identifier.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { throw UpdateError.invalidLocation }
                 directory = pending.deletingLastPathComponent().appendingPathComponent(receipt.identifier)
@@ -216,19 +232,28 @@ final class DesktopUpdateController {
                 signature: UpdateWorkspace.read(directory.appendingPathComponent("update.json.sig"), limit: 64))
             guard release.version == handoff.targetVersion else { throw UpdateError.invalidManifest }
             if version == handoff.currentVersion {
-                if busy { return (nil, true) }
+                if busy { return (nil, true, nil) }
                 let lock = try UpdateTargetLock(application: current)
                 try UpdateInstallation.checkIdentity(current, version: version)
-                try UpdateWorkspace.remove(directory, root: directory.deletingLastPathComponent())
-                withExtendedLifetime(lock) {}
-                return (nil, false)
+                return (handoff, false, lock)
             }
             guard release.version == version else { throw UpdateError.invalidManifest }
-            return (handoff, false)
+            let lock = busy ? nil : try UpdateTargetLock(application: current)
+            return (handoff, false, lock)
         }
-        restored = recovery.0; otherInstallerActive = recovery.1
-        if let restored {
+        otherInstallerActive = recovery.1; installationLock = recovery.2
+        if let handoff = recovery.0, version == handoff.currentVersion {
+            try await model.settleUpdateCredential(handoff, installed: false)
+            try await files.perform { _ in try UpdateWorkspace.remove(handoff.directory, root: handoff.directory.deletingLastPathComponent()) }
+            installationLock = nil
+            return
+        }
+        if let restored = recovery.0 {
+            directory = restored.directory; installed = true
             isUpdateLaunch = true
+            try await model.adoptUpdateCredential(restored)
+            try await model.settleUpdateCredential(restored, installed: true)
+            self.restored = restored
             if let view = restored.view { try presentation.preserve(view) }
             presentation.update = DesktopUpdateState(phase: .success, percent: 100, currentVersion: version, targetVersion: version)
         }
@@ -240,16 +265,18 @@ final class DesktopUpdateController {
         acknowledging = true
         do {
             let receipt = UpdateLaunchReceipt(identifier: restored.identifier, version: version, processID: ProcessInfo.processInfo.processIdentifier)
+            let ownedLock = installationLock
             try await files.perform { _ in
                 try UpdateWorkspace.write(receipt, to: restored.directory.appendingPathComponent("launched.json"))
                 // 助手仍持锁时保留pending；它退出后任一新进程都能接管尚未完成的清理
-                if try !UpdateTargetLock.isBusy(application: restored.target) {
-                    let lock = try UpdateTargetLock(application: restored.target)
+                if try ownedLock != nil || !UpdateTargetLock.isBusy(application: restored.target) {
+                    let lock = try ownedLock ?? UpdateTargetLock(application: restored.target)
                     try UpdateWorkspace.remove(restored.directory, root: restored.directory.deletingLastPathComponent())
                     withExtendedLifetime(lock) {}
                 }
             }
             self.restored = nil
+            if ownedLock != nil { directory = nil; installationLock = nil }
         } catch { acknowledging = false; NSLog("TinkerFin 更新启动回执未保存") }
     }
 

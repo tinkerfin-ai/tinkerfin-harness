@@ -32,6 +32,7 @@ function validState(value: unknown): value is DesktopState {
     && oneOf(value.update.phase, ['idle', 'checking', 'available', 'latest', 'check-error', 'downloading', 'download-error', 'verifying', 'verify-error', 'waiting', 'installing', 'install-error', 'restarting', 'restart-error', 'success'])
     && typeof value.update.percent === 'number' && Number.isFinite(value.update.percent) && value.update.percent >= 0 && value.update.percent <= 100
     && text(value.update.currentVersion) && text(value.update.targetVersion)
+    && oneOf(value.update.failure, ['none', 'network', 'storage', 'release', 'unavailable'])
     && (value.resume === null || (record(value.resume) && oneOf(value.resume.page, ['connection', 'workspace', 'permissions', 'account'])
       && text(value.resume.service) && text(value.resume.api) && text(value.resume.name)
       && typeof value.resume.manualAPI === 'boolean' && typeof value.resume.editingName === 'boolean' && typeof value.resume.connectionForm === 'boolean'))

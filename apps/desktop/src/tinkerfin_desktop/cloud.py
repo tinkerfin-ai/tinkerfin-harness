@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+from asyncio import timeout
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Generic, TypeVar
@@ -62,6 +63,13 @@ class DeviceCapabilities(BaseModel):
 class _ConnectedDevice(PairedDevice):
     model_config = ConfigDict(extra="forbid", frozen=True)
     connection_id: DeviceId
+
+
+class _StudioConnection(connect):
+    """设备凭证只发送到已配对地址，拒绝握手重定向"""
+
+    def process_redirect(self, exc: Exception) -> Exception:
+        return exc
 
 
 class StudioClient:
@@ -274,7 +282,7 @@ class StudioClient:
         try:
             url = httpx.URL(self.configuration.server + "/api/devices/connect")
             url = url.copy_with(scheme="wss" if url.scheme == "https" else "ws")
-            async with connect(
+            async with _StudioConnection(
                 str(url),
                 additional_headers={"Authorization": self.configuration.authorization},
                 max_size=8 * 1024 * 1024,
@@ -286,10 +294,12 @@ class StudioClient:
                 payload: dict[str, JsonValue] = {
                     "capabilities": capabilities.model_dump(mode="json"),
                 }
-                await socket.send(
-                    TypeAdapter(dict[str, JsonValue]).dump_json(payload).decode()
-                )
-                response = await socket.recv()
+                # HTTP升级完成不代表业务握手完成，身份回复也必须有明确期限
+                async with timeout(10):
+                    await socket.send(
+                        TypeAdapter(dict[str, JsonValue]).dump_json(payload).decode()
+                    )
+                    response = await socket.recv()
                 if not isinstance(response, str) or len(response.encode()) > 64 * 1024:
                     raise CloudError(502)
                 device = _ConnectedDevice.model_validate_json(response)

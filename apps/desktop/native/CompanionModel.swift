@@ -73,25 +73,30 @@ final class CompanionModel: ObservableObject {
         }
     }
 
-    /// 所有配置写入按本机操作顺序结算，后台授权完成也走同一边界
-    func run(reportError: Bool = true, _ work: @escaping @MainActor () async throws -> Void) async throws {
+    /// 保存与授权提交独立结算；启动恢复可由调用者取消，但不能取消排在前面的操作
+    func run(reportError: Bool = true, cancelWithCaller: Bool = false, _ work: @escaping @MainActor () async throws -> Void) async throws {
         while let previous = operation { _ = try? await previous.value }
+        if cancelWithCaller { try Task.checkCancellation() }
         guard !shuttingDown else { throw CancellationError() }
         busy = true; error = nil
         let task = Task { @MainActor in
             defer { busy = false; operation = nil }
             do { try Task.checkCancellation(); try await work() }
             catch {
+                if cancelWithCaller, Task.isCancelled { throw CancellationError() }
                 if reportError, !(error is CancellationError), !shuttingDown { self.error = userError(error); if ["loading", "connecting"].contains(status) { status = "failed" } }
                 throw error
             }
         }
         operation = task
-        try await task.value
+        if cancelWithCaller {
+            try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+        } else { try await task.value }
     }
 
     func restore(connect: Bool = true) async throws {
-        try await run {
+        try await run(cancelWithCaller: true) {
             let (lock, directory) = try await self.workspaceAccess.lockState(self.stateSelection)
             self.lifetimeLock = lock
             let store = ConfigurationStore(directory: directory)
@@ -117,9 +122,9 @@ final class CompanionModel: ObservableObject {
             try await store.save(saved)
             self.store = store; self.saved = saved
             self.checkPermissions()
-            try await self.cleanRetiredAccounts()
-            if let pending = self.saved.pending, pending.authorization == nil {
-                try await self.discardPending()
+            if connect {
+                try await self.cleanRetiredAccounts()
+                if let pending = self.saved.pending, pending.authorization == nil { try await self.discardPending() }
             }
             self.status = self.saved.device == nil ? "unpaired" : "offline"
             if connect, self.saved.pending == nil, self.saved.device != nil { try await self.connectNow() }
@@ -129,7 +134,11 @@ final class CompanionModel: ObservableObject {
 
     /// 启动恢复先取得状态目录独占权，更新事务恢复完成后才重新接收服务端工作
     func connectRestoredState() async throws {
-        try await run { if self.saved.pending == nil, self.saved.device != nil { try await self.connectNow() } }
+        try await run(cancelWithCaller: true) {
+            try await self.cleanRetiredAccounts()
+            if let pending = self.saved.pending, pending.authorization == nil { try await self.discardPending() }
+            if self.saved.pending == nil, self.saved.device != nil { try await self.connectNow() }
+        }
         resumeAuthorization()
     }
 
@@ -396,21 +405,38 @@ final class CompanionModel: ObservableObject {
         if backend.isRunning { try await backend.commitUpdatePreparation() }
     }
 
-    /// Keychain与配置分开提交，预登记新账户使中断后的未采用条目也有明确清理归属
-    func prepareUpdateCredential(application: URL) async throws {
-        guard preparingUpdate, let store, let account = saved.keychainAccount else { throw ClientError.credentialUnavailable }
+    /// 安装前保留当前账户，候选身份创建的账户由更新记录负责结算
+    func prepareUpdateCredential(handoff: UpdateHandoff) async throws {
+        guard preparingUpdate, let account = saved.keychainAccount else { throw ClientError.credentialUnavailable }
         try await run(reportError: false) {
             try await self.cleanRetiredAccounts()
-            let nextAccount = UUID().uuidString.lowercased()
-            var next = self.saved
-            next.retiredAccounts.append(nextAccount)
-            try await store.save(next); self.saved = next
-            try await self.keychain.createForUpdate(account: nextAccount, existingAccount: account, application: application)
-            next.keychainAccount = nextAccount
-            next.retiredAccounts.removeAll { $0 == nextAccount }; next.retiredAccounts.append(account)
-            try await store.save(next); self.saved = next
-            try await self.cleanRetiredAccounts()
+            let secret = try await self.keychain.read(account: account)
+            try await UpdateCredentials.prepare(handoff, account: account, secret: secret)
         }
+    }
+
+    /// 新应用验证可读后才采用候选账户，旧账户仍由保留的旧身份清理
+    func adoptUpdateCredential(_ handoff: UpdateHandoff) async throws {
+        guard let store else { throw ClientError.credentialUnavailable }
+        guard let record = try await UpdateFileWork().perform({ _ in try UpdateCredentials.read(handoff) }) else { return }
+        try await run(reportError: false) {
+            guard [record.sourceAccount, record.targetAccount].contains(self.saved.keychainAccount ?? ""), self.saved.pending == nil else {
+                throw UpdateError.invalidLocation
+            }
+            let secret = try await self.keychain.read(account: record.targetAccount)
+            try record.authenticate(handoff, secret: secret)
+            var next = self.saved
+            next.keychainAccount = record.targetAccount
+            try await store.save(next); self.saved = next
+        }
+    }
+
+    func settleUpdateCredential(_ handoff: UpdateHandoff, installed: Bool) async throws {
+        guard try await UpdateFileWork().perform({ _ in try UpdateCredentials.read(handoff) != nil }) else { return }
+        guard let account = saved.keychainAccount else { throw ClientError.credentialUnavailable }
+        let secret = try await keychain.read(account: account)
+        if installed { try await UpdateCredentials.finish(handoff, secret: secret) }
+        else { try await UpdateCredentials.cancel(handoff, secret: secret) }
     }
 
     func resumeAfterUpdate() async throws {

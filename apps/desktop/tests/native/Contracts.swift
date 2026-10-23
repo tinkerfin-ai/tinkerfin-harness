@@ -37,7 +37,22 @@ struct NativeContracts {
         let arguments = CommandLine.arguments
         let mode = arguments[1]
         let directory = URL(fileURLWithPath: arguments[2])
-        if mode == "initialization-recovery" {
+        if mode == "model-startup-cancel" || mode == "model-accepted-cancel" {
+            try await modelCallerCancellationContract(directory, startup: mode == "model-startup-cancel")
+        } else if mode == "startup-queued-restore" || mode == "startup-queued-connect" {
+            try await queuedStartupCancellationContract(directory, restore: mode == "startup-queued-restore")
+        } else if mode == "client-installation" {
+            try require(ClientInstallation.accepts(URL(fileURLWithPath: "/Applications/TinkerFin.app", isDirectory: true)), "正式安装位置被拒绝")
+            for path in ["/Applications/TinkerFin 2.app", directory.appendingPathComponent("TinkerFin.app").path] {
+                try require(!ClientInstallation.accepts(URL(fileURLWithPath: path)), "下载副本被允许作为独立客户端启动")
+            }
+        } else if mode == "client-instance-hold" || mode == "client-instance-probe" {
+            do {
+                let lock = try ClientInstanceLock(file: directory.appendingPathComponent("client.lock"))
+                if mode == "client-instance-hold" { try await feedbackCheckpoint("client-active") }
+                withExtendedLifetime(lock) {}
+            } catch ApplicationLockError.alreadyRunning { print("already-running"); return }
+        } else if mode == "initialization-recovery" {
             let state = directory.appendingPathComponent("state")
             try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
             try Data("invalid".utf8).write(to: state.appendingPathComponent("settings.json"))
@@ -55,6 +70,8 @@ struct NativeContracts {
                 catch ApplicationLockError.alreadyRunning { }
                 await duplicate.shutdown(); await model.shutdown()
             } catch { await model.shutdown(); throw error }
+        } else if mode == "update-workspace" {
+            try await updateWorkspaceContract(directory)
         } else if mode == "update-installation" {
             try await updateInstallationContract(directory)
         } else if mode == "update-subprocess" {
@@ -678,6 +695,124 @@ struct NativeContracts {
     }
 }
 
+@MainActor
+private func modelCallerCancellationContract(_ directory: URL, startup: Bool) async throws {
+    let model = CompanionModel(state: directory.appendingPathComponent("state"), resources: directory)
+    let server = try checkedServer(String(contentsOf: directory.appendingPathComponent("server.txt"), encoding: .utf8))
+    var completed = false
+    let request = Task {
+        try await model.run(cancelWithCaller: startup) {
+            _ = try await AuthorizationClient().projects(server: server, token: "contract-token")
+            completed = true
+        }
+    }
+    do {
+        try await feedbackCheckpoint("request-started")
+        request.cancel()
+        try await feedbackCheckpoint("caller-cancelled")
+        if startup {
+            do { try await request.value; throw ClientError.message("启动请求未传播取消") }
+            catch is CancellationError { }
+            try require(!completed && model.error == nil, "取消的启动请求被保存为业务错误")
+        } else {
+            try await request.value
+            try require(completed, "已接受操作被调用者取消")
+        }
+        try require(!model.busy, "已结算操作仍占用模型")
+        await model.shutdown()
+    } catch {
+        request.cancel(); await model.shutdown(); _ = try? await request.value
+        throw error
+    }
+}
+
+@MainActor
+private func queuedStartupCancellationContract(_ directory: URL, restore: Bool) async throws {
+    let model = CompanionModel(state: directory.appendingPathComponent("state"), resources: directory)
+    let acceptedEntered = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    let startupEntered = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    let release = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    defer { acceptedEntered.continuation.finish(); startupEntered.continuation.finish(); release.continuation.finish() }
+    var committed = false
+    let accepted = Task {
+        try await model.run {
+            acceptedEntered.continuation.yield(())
+            for await _ in release.stream { break }
+            try Task.checkCancellation()
+            committed = true
+        }
+    }
+    for await _ in acceptedEntered.stream { break }
+    let startup = Task {
+        startupEntered.continuation.yield(())
+        if restore { try await model.restore(connect: false) }
+        else { try await model.connectRestoredState() }
+    }
+    for await _ in startupEntered.stream { break }
+    startup.cancel()
+    release.continuation.yield(())
+    do {
+        try await accepted.value
+        do { try await startup.value; throw ClientError.message("排队启动在取消后仍然执行") }
+        catch is CancellationError { }
+        try require(committed && !model.ready && !model.busy, "启动取消影响了先前提交或仍恢复了模型")
+        try require(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("state").path), "已取消启动仍创建状态目录")
+        await model.shutdown()
+    } catch {
+        accepted.cancel(); startup.cancel(); await model.shutdown()
+        _ = try? await accepted.value; _ = try? await startup.value
+        throw error
+    }
+}
+
+@MainActor
+func updateWorkspaceContract(_ input: URL) async throws {
+    let base = input.resolvingSymlinksInPath(), manager = FileManager.default
+    for hint in [false, true] {
+        let root = base.appendingPathComponent(hint ? "new-directory" : "new-path", isDirectory: hint)
+        let first = try UpdateWorkspace.create(root: root)
+        try UpdateWorkspace.checkPrivate(root)
+        try UpdateWorkspace.checkPrivate(first)
+        let second = try UpdateWorkspace.create(root: root)
+        try require(first != second, "重复下载共享了暂存目录")
+        let retained = root.appendingPathComponent("retained.txt")
+        try Data("retained".utf8).write(to: retained)
+        try UpdateWorkspace.remove(first, root: root)
+        try require(manager.fileExists(atPath: second.path) && manager.fileExists(atPath: retained.path), "清理删除了其他下载或用户文件")
+        try UpdateWorkspace.remove(second, root: root)
+    }
+    let privateRoot = base.appendingPathComponent("private", isDirectory: true)
+    try manager.createDirectory(at: privateRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let link = base.appendingPathComponent("link", isDirectory: true)
+    try manager.createSymbolicLink(at: link, withDestinationURL: privateRoot)
+    for root in [link, link.appendingPathComponent("updates", isDirectory: true)] {
+        do { _ = try UpdateWorkspace.create(root: root); throw ClientError.message("更新暂存目录接受符号链接") }
+        catch UpdateError.invalidLocation { }
+    }
+    let shared = base.appendingPathComponent("shared", isDirectory: true)
+    try manager.createDirectory(at: shared, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o755])
+    do { _ = try UpdateWorkspace.create(root: shared); throw ClientError.message("更新暂存目录允许其他用户访问") }
+    catch UpdateError.invalidLocation { }
+    try require(try manager.contentsOfDirectory(atPath: shared.path).isEmpty, "权限拒绝仍产生下载目录")
+    let file = base.appendingPathComponent("not-a-directory")
+    try Data("retained".utf8).write(to: file)
+    do { _ = try UpdateWorkspace.create(root: file); throw ClientError.message("更新暂存目录接受普通文件") }
+    catch is CocoaError { }
+    try require(try Data(contentsOf: file) == Data("retained".utf8), "路径拒绝覆盖了原文件")
+
+    let cases: [(Error, DesktopUpdateFailure)] = [
+        (UpdateError.invalidLocation, .storage), (CocoaError(.fileWriteOutOfSpace), .storage),
+        (NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)), .storage),
+        (URLError(.notConnectedToInternet), .network), (UpdateError.invalidManifest, .release),
+        (UpdateError.unavailable, .release), (UpdateError.failedProcess, .unavailable),
+    ]
+    for (error, expected) in cases { try require(DesktopUpdateFailure(error: error) == expected, "更新失败原因误导恢复操作") }
+    let work = Task { try await UpdateFileWork().perform { cancellation in try cancellation.check(); return 1 } }
+    work.cancel()
+    do { _ = try await work.value; throw ClientError.message("已取消的文件准备仍然执行") }
+    catch is CancellationError { }
+}
+
 
 private struct AuthorizationUpdateFixture: Decodable {
     let server: String
@@ -790,4 +925,10 @@ private func updateInstallationContract(_ directory: URL) async throws {
         if fixture.installed { throw error }
     }
     try UpdateInstallation.checkIdentity(fixture.handoff.target, version: fixture.installed ? "0.1.2" : "0.1.1")
+    if fixture.installed {
+        let source = try UpdateInstallation.retainedApplication(fixture.handoff)
+        try UpdateInstallation.checkIdentity(source, version: fixture.handoff.currentVersion)
+        try UpdateWorkspace.write(fixture.handoff, to: fixture.handoff.directory.appendingPathComponent("handoff.json"))
+        try UpdateWorkspace.remove(fixture.handoff.directory, root: fixture.handoff.directory.deletingLastPathComponent())
+    }
 }

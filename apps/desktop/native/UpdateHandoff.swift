@@ -119,7 +119,8 @@ enum UpdateWorkspace {
 
     static func create(root: URL) throws -> URL {
         let root = root.standardizedFileURL
-        guard root.resolvingSymlinksInPath() == root else { throw UpdateError.invalidLocation }
+        // 尚不存在的目录解析后可能丢失 URL 的目录标记，路径相等仍须拒绝符号链接
+        guard root.resolvingSymlinksInPath().path == root.path else { throw UpdateError.invalidLocation }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try checkPrivate(root)
         let directory = root.appendingPathComponent(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(), isDirectory: true)
@@ -129,7 +130,8 @@ enum UpdateWorkspace {
 
     static func remove(_ directory: URL, root: URL) throws {
         guard directory.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL,
-              directory.lastPathComponent.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { throw UpdateError.invalidLocation }
+              directory.lastPathComponent.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil,
+              !FileManager.default.fileExists(atPath: directory.appendingPathComponent("credentials.json").path) else { throw UpdateError.invalidLocation }
         let journal = root.appendingPathComponent(directory.lastPathComponent + ".cleanup.json")
         if FileManager.default.fileExists(atPath: journal.path) {
             let ownership = try JSONDecoder().decode(CleanupOwnership.self, from: read(journal, limit: 4096))
@@ -235,6 +237,16 @@ enum UpdateInstallation {
         handoff.target.deletingLastPathComponent().appendingPathComponent(".TinkerFin-update-" + handoff.identifier, isDirectory: true)
     }
 
+    static func retainedApplication(_ handoff: UpdateHandoff) throws -> URL {
+        let owner = try JSONDecoder().decode(AdjacentOwnership.self,
+            from: UpdateWorkspace.read(handoff.directory.appendingPathComponent("adjacent.json"), limit: 4096))
+        let path = adjacentDirectory(handoff)
+        var info = stat()
+        guard lstat(path.path, &info) == 0, info.st_dev == owner.device, info.st_ino == owner.inode,
+              info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFDIR else { throw UpdateError.invalidLocation }
+        return path.appendingPathComponent("TinkerFin.app", isDirectory: true)
+    }
+
     static func install(_ handoff: UpdateHandoff, release: DesktopRelease, lock: UpdateTargetLock, cancellation: UpdateCancellation,
                         progress: @Sendable (Double) -> Void) throws {
         let manager = FileManager.default
@@ -248,13 +260,14 @@ enum UpdateInstallation {
         let temporary = adjacentDirectory(handoff)
         guard mkdir(temporary.path, 0o700) == 0 else { throw UpdateError.invalidLocation }
         let adjacent = temporary.appendingPathComponent("TinkerFin.app", isDirectory: true)
+        var exchanged = false
         defer {
-            do {
+            if !exchanged { do {
                 try manager.removeItem(at: temporary)
                 let record = handoff.directory.appendingPathComponent("adjacent.json")
                 if manager.fileExists(atPath: record.path) { try manager.removeItem(at: record) }
             }
-            catch { NSLog("TinkerFin 更新暂存应用清理失败：%@", String(describing: error)) }
+            catch { NSLog("TinkerFin 更新暂存应用清理失败：%@", String(describing: error)) } }
         }
         var ownership = stat()
         guard lstat(temporary.path, &ownership) == 0 else { throw UpdateError.invalidLocation }
@@ -268,7 +281,8 @@ enum UpdateInstallation {
         try checkIdentity(handoff.target, version: handoff.currentVersion)
         guard try UpdateTree.digest(handoff.target, cancellation: cancellation) == handoff.currentTreeSHA256 else { throw UpdateError.invalidArchive }
         guard renameatx_np(AT_FDCWD, adjacent.path, AT_FDCWD, handoff.target.path, UInt32(RENAME_SWAP)) == 0 else { throw UpdateError.invalidLocation }
-        // 交换后adjacent是旧包；新包已生效，清理失败不能倒报安装失败
+        // 旧包保留到新身份采用凭证并完成清理，崩溃恢复仍需用旧代码删除旧Keychain条目
+        exchanged = true
         progress(100)
         withExtendedLifetime(lock) {}
     }

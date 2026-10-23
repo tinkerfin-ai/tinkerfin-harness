@@ -10,7 +10,7 @@ export function UpdateDialog({ update, completed }: { update: UpdateState; compl
   const { t } = useI18n()
   const titleRef = useRef<HTMLHeadingElement>(null)
   const action = useAction()
-  const { phase, percent, currentVersion, targetVersion } = update
+  const { phase, percent, currentVersion, targetVersion, failure } = update
   const open = phase !== 'idle', locked = phase === 'installing' || phase === 'restarting'
   const format = (key: string, version: string) => t(key).replace('{version}', version)
   const titles: Record<UpdatePhase, string> = {
@@ -19,9 +19,12 @@ export function UpdateDialog({ update, completed }: { update: UpdateState; compl
     verifying: t('正在校验安装包'), 'verify-error': t('校验失败'), waiting: t('等待本机操作完成'), installing: t('正在安装更新'),
     'install-error': t('安装失败'), restarting: t('正在重新启动'), 'restart-error': t('未能重新启动'), success: format('已更新至 {version}', currentVersion),
   }
+  const failureDescription = t(failure === 'network' ? '请检查网络后重试'
+    : failure === 'storage' ? '请检查磁盘空间和目录权限'
+    : failure === 'release' ? '更新文件不可用，请稍后重试' : '请重试')
   const descriptions: Partial<Record<UpdatePhase, string>> = {
     available: t('是否更新？更新后将重新启动'), latest: format('当前版本 {version}', currentVersion),
-    'check-error': t('请检查网络后重试'), 'download-error': t('请检查网络后重试'),
+    'check-error': failureDescription, 'download-error': failureDescription,
     'verify-error': t('请重新下载安装包'), 'install-error': t('当前版本仍可使用'),
   }
   const busy = ['checking', 'downloading', 'verifying', 'waiting', 'installing', 'restarting'].includes(phase)

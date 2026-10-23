@@ -31,6 +31,43 @@ async def run_contract(binary: Path, mode: str, location: str | Path) -> str:
         await process.wait()
 
 
+async def test_client_requires_replacement_and_one_machine_instance(
+    swift_contracts, tmp_path
+):
+    assert (
+        await run_contract(swift_contracts, "client-installation", tmp_path)
+        == "verified client-installation"
+    )
+    process = await asyncio.create_subprocess_exec(
+        str(swift_contracts),
+        "client-instance-hold",
+        str(tmp_path),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    try:
+        assert await process.stdout.readline() == b"checkpoint client-active\n"
+        assert (
+            await run_contract(swift_contracts, "client-instance-probe", tmp_path)
+            == "already-running"
+        )
+        process.stdin.write(b"client-active\n")
+        await process.stdin.drain()
+        stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert stdout.decode().strip() == "verified client-instance-hold"
+        assert (
+            await run_contract(swift_contracts, "client-instance-probe", tmp_path)
+            == "verified client-instance-probe"
+        )
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+
+
 async def test_native_language_preferences_preserve_error_parameters_and_system_order(
     swift_contracts, tmp_path
 ):

@@ -25,7 +25,7 @@ export function Account({ state, view, change }: Props) {
   const busy = logout.pending || state.busy === 'logout'
   const saving = nameAction.pending || state.busy === 'name'
   useLayoutEffect(() => {
-    if (view.page !== 'account' || !state.connected) return
+    if (view.page !== 'account' || !state.connected) { wasEditing.current = false; return }
     if (view.editingName) nameInput.current?.focus()
     else if (wasEditing.current) editButton.current?.focus()
     wasEditing.current = view.editingName
