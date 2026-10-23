@@ -129,18 +129,22 @@ def trust_settings(root: Path, label: str, *, admin: bool = False) -> TrustSetti
 
 
 def remove_owned_trust(root: Path, pem: Path, fingerprint: str) -> CommandResult:
-    snapshot = trust_settings(root, "remove-before", admin=True)
-    if fingerprint not in snapshot.fingerprints:
-        return CommandResult(0, "", "")
     removed = command(
         "sudo", "-n", "/usr/bin/security", "remove-trusted-cert", "-d", pem
     )
-    if removed.code:
+    # remove-trusted-cert 的缺失诊断也可能返回 1，不能把其他 Security 命令的退出码当作此命令契约
+    not_found = (
+        removed.stderr.strip()
+        == "SecTrustSettingsRemoveTrustSettings: The specified item could not be found in the keychain."
+    )
+    if removed.code and not not_found:
         return removed
     after = trust_settings(root, "remove-after", admin=True)
     if fingerprint in after.fingerprints:
+        if removed.code:
+            return removed
         return CommandResult(-1, "", "独占合成证书的管理员域信任仍存在")
-    return removed
+    return CommandResult(0, removed.stdout, "")
 
 
 def certificate(root: Path, name: str, password: str) -> tuple[Path, Path, str]:
