@@ -247,6 +247,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/runtime/package-lock.json
       - run: uv sync --locked --all-packages
+      - name: Verify isolated signing identities
+        run: uv run pytest apps/desktop/tests/test_signing_identity.py -q
       - run: npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
       - name: Verify independent desktop interface
         working-directory: apps/desktop/ui
@@ -269,7 +271,7 @@ jobs:
           done
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 "${native_sources[@]}" apps/desktop/native/installer/InstallerApp.swift
       - name: Test desktop and system interface contracts
-        run: uv run pytest apps/desktop/tests -q --durations=10
+        run: uv run pytest apps/desktop/tests --ignore=apps/desktop/tests/test_signing_identity.py -q --durations=10
       - name: Test isolated macOS sandbox contracts
         run: uv run pytest packages/tinkerfin-sandbox/tests/native -q -n 2 --dist=loadfile --durations=10
 

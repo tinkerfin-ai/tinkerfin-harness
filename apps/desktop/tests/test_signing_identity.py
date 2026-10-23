@@ -42,7 +42,7 @@ pytestmark = [
     pytest.mark.companion_integration,
     pytest.mark.skipif(
         not isolated_runner(),
-        reason="签名信任实验仅允许 GitHub 托管 macOS 的 desktop/release 独占 job",
+        reason="签名身份实验仅允许 GitHub 托管 macOS 的 desktop/release 独占 job",
     ),
 ]
 
@@ -128,25 +128,6 @@ def trust_settings(root: Path, label: str, *, admin: bool = False) -> TrustSetti
     )
 
 
-def remove_owned_trust(root: Path, pem: Path, fingerprint: str) -> CommandResult:
-    removed = command(
-        "sudo", "-n", "/usr/bin/security", "remove-trusted-cert", "-d", pem
-    )
-    # remove-trusted-cert 的缺失诊断也可能返回 1，不能把其他 Security 命令的退出码当作此命令契约
-    not_found = (
-        removed.stderr.strip()
-        == "SecTrustSettingsRemoveTrustSettings: The specified item could not be found in the keychain."
-    )
-    if removed.code and not not_found:
-        return removed
-    after = trust_settings(root, "remove-after", admin=True)
-    if fingerprint in after.fingerprints:
-        if removed.code:
-            return removed
-        return CommandResult(-1, "", "独占合成证书的管理员域信任仍存在")
-    return CommandResult(0, removed.stdout, "")
-
-
 def certificate(root: Path, name: str, password: str) -> tuple[Path, Path, str]:
     __tracebackhide__ = True
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -230,7 +211,7 @@ def build_app(root: Path, name: str, version: str, source: Path) -> Path:
 def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningApps]:
     __tracebackhide__ = True
     if not isolated_runner():
-        pytest.skip("禁止在本机或自托管 runner 创建签名信任")
+        pytest.skip("禁止在本机或自托管 runner 修改签名搜索清单")
     root = tmp_path_factory.mktemp("signing-identity").resolve()
     root.chmod(0o700)
     desktop = Path(__file__).resolve().parents[1]
@@ -244,7 +225,6 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
     original_admin_trust = trust_settings(root, "admin-before", admin=True)
     keychain = root / "owned.keychain-db"
     password = secrets.token_hex(32)
-    trusted_certificates: list[tuple[Path, str]] = []
     created = False
     original_sigterm = signal.getsignal(signal.SIGTERM)
 
@@ -276,7 +256,7 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
         )
         identities = []
         for role in ("A", "C"):
-            pem, container, fingerprint = certificate(
+            _, container, fingerprint = certificate(
                 root, f"TF-sign-{role}-{uuid4().hex[:12]}", password
             )
             assert fingerprint not in original_user_trust.fingerprints
@@ -293,23 +273,6 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
                 "-T",
                 "/usr/bin/codesign",
                 password=password,
-            )
-            trusted_certificates.append((pem, fingerprint))
-            # SecTrustSettings.h 的 Authentication 契约：用户域需要 GUI；管理员域 root 无需弹窗
-            checked(
-                "信任合成签名证书",
-                "sudo",
-                "-n",
-                "/usr/bin/security",
-                "add-trusted-cert",
-                "-d",
-                "-r",
-                "trustRoot",
-                "-p",
-                "codeSign",
-                "-k",
-                keychain,
-                pem,
             )
             identities.append(fingerprint)
         checked(
@@ -347,11 +310,7 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
                 (c, identities[1]),
             ):
                 builder.sign(app, identity, root, keychain=keychain, timestamp=False)
-        # 用户端不安装签名证书；验收前先撤回构建机信任和搜索路径，验证包内身份自足
-        while trusted_certificates:
-            removed = remove_owned_trust(root, *trusted_certificates[-1])
-            assert removed.code == 0, removed.stderr
-            trusted_certificates.pop()
+        # TN2206 的自签流程不要求系统信任；验收前还原搜索路径，验证包内身份自足
         checked(
             "恢复构建前搜索清单",
             "security",
@@ -371,13 +330,6 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
         )
     finally:
         failures = []
-        for pem, fingerprint in trusted_certificates:
-            try:
-                result = remove_owned_trust(root, pem, fingerprint)
-                if result.code:
-                    failures.append(f"撤回合成证书信任：{result.code} {result.stderr}")
-            except (AssertionError, OSError, ValueError) as error:
-                failures.append(f"核对合成证书信任失败：{error}")
         if created or keychain.exists():
             result = command(
                 "security",
