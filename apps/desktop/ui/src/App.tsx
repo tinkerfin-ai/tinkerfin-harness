@@ -21,7 +21,7 @@ function initialView(state: DesktopState): ViewState {
   return state.resume ?? {
     page: state.connected ? 'workspace' : 'connection', connectionForm: !state.connected && !state.service,
     service: state.service, api: state.api === state.service ? '' : state.api,
-    manualAPI: Boolean(state.api && state.api !== state.service), editingName: false, name: state.name,
+    manualAPI: false, editingName: false, name: state.name,
   }
 }
 
@@ -47,7 +47,7 @@ function Workbench({ state }: { state: DesktopState }) {
       : { ...previous, page: 'connection', editingName: false, name: state.name })
     else if (newlyConnected || configurationChanged) {
       setView(previous => ({ ...previous, page: newlyConnected ? 'workspace' : previous.page, connectionForm: false,
-        ...(configurationChanged ? { service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: state.api !== state.service } : {}) }))
+        ...(configurationChanged ? { service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: false } : {}) }))
     }
     if (state.connected) savedConnection.current = { service: state.service, api: state.api }
     wasConnected.current = state.connected
@@ -78,7 +78,7 @@ function Status({ state }: { state: DesktopState }) {
   const Icon = state.connected ? CircleCheck : connecting ? LoaderCircle : CircleMinus
   return <section className="client status-popover" aria-label="TinkerFin" inert={state.update.phase !== 'idle'}>
     <div className="device-glyph"><Laptop aria-hidden="true" /></div>
-    <div className="grow"><div className="device-title truncate">{state.name}</div><div className={`status status--${state.connected ? 'online' : connecting ? '' : 'offline'}`} role="status"><Icon className={connecting && !state.connected ? 'spinner' : undefined} aria-hidden="true" /><span>{t(state.connected ? '已连接' : connecting ? '连接中' : '未连接')}</span></div></div>
+    <div className="device-summary"><span className="device-title truncate">{state.name}</span><span className={`status status--${state.connected ? 'online' : connecting ? '' : 'offline'}`} role="status"><Icon className={connecting && !state.connected ? 'spinner' : undefined} aria-hidden="true" /><span>{t(state.connected ? '已连接' : connecting ? '连接中' : '未连接')}</span></span></div>
     <div className="popover-actions"><IconButton label={t('设置')} icon={<Settings2 />} variant="ghost" onClick={() => void send({ type: 'open-workbench' })} /><IconButton label={t('退出')} className="quit-button" icon={<Power />} variant="ghost" onClick={() => void send({ type: 'quit' })} /></div>
   </section>
 }

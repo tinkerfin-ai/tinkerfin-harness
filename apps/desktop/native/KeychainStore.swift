@@ -99,11 +99,10 @@ final class KeychainStore: @unchecked Sendable {
         }
     }
 
+    /// 仅供已持久化退休的账户清理；旧签名的密钥不可读也不应阻止精确删除
     func remove(account: String) async throws {
         try await perform { [self] in
-            if try Self.find(service: service, account: account) != nil {
-                try Self.delete(service: service, account: account)
-            }
+            try Self.delete(service: service, account: account)
             credentials.removeValue(forKey: account)
         }
     }
@@ -121,7 +120,7 @@ final class KeychainStore: @unchecked Sendable {
         }
     }
 
-    // 调用方须先验证读取权限；按精确条目引用删除，避免查询式删除的owner-edit失败
+    // 内部调用由退休记录确认归属，公开更新入口另行验证密钥；精确引用避免owner-edit失败
     private static func delete(service: String, account: String) throws {
         var item: CFTypeRef?
         let found = SecItemCopyMatching([

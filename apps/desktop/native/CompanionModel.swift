@@ -177,6 +177,7 @@ final class CompanionModel: ObservableObject {
             try await run {
                 self.cancelDesktop(message: "连接正在重试，请核验已开始操作的结果")
                 await self.backend.stopAndWait()
+                try await self.cleanRetiredAccounts()
                 // 旧进程已结算；新一轮等待真实连接结果，不能在进程刚启动时结束反馈
                 self.retrying = true
                 try await self.connectNow(reason: .retry)
@@ -234,15 +235,24 @@ final class CompanionModel: ObservableObject {
                     try await Task.sleep(for: .seconds(2))
                 }
             } catch is CancellationError { }
-            catch ClientError.authorizationExpired {
-                do { try await run { try await self.endPending(pending, notice: "授权已过期，请重新连接") } }
-                catch { self.error = userError(error) }
+            catch {
+                guard !shuttingDown else { return }
+                // 新身份提交后的清理或连接失败不再属于待授权失败，不能清掉已提交的身份和错误
+                if saved.pending?.account == pending.account {
+                    let notice: String?
+                    switch error {
+                    case ClientError.authorizationExpired: notice = "授权已过期，请重新连接"
+                    case ClientError.credentialUnavailable: notice = "授权凭证不可用，请重新连接"
+                    default: notice = nil
+                    }
+                    if let notice {
+                        do { try await run { try await self.endPending(pending, notice: notice) } }
+                        catch { self.error = userError(error) }
+                    } else { self.error = userError(error) }
+                } else if saved.keychainAccount == pending.account {
+                    self.error = userError(error)
+                }
             }
-            catch ClientError.credentialUnavailable {
-                do { try await run { try await self.endPending(pending, notice: "授权凭证不可用，请重新连接") } }
-                catch { self.error = userError(error) }
-            }
-            catch { if saved.pending?.account == pending.account, !shuttingDown { self.error = userError(error) } }
         }
     }
 
@@ -278,6 +288,7 @@ final class CompanionModel: ObservableObject {
             next.acceptAuthorization(device, at: pending.connection)
             next.keychainAccount = pending.account; next.pending = nil
             try await store.save(next); saved = next
+            status = "offline"; authorizationNotice = ""
             projects = []; accountName = ""; projectsError = false
             try await cleanRetiredAccounts()
             try await connectNow(reason: .authorization)
@@ -306,8 +317,10 @@ final class CompanionModel: ObservableObject {
     }
     private func cleanRetiredAccounts() async throws {
         guard let store, !saved.retiredAccounts.isEmpty else { return }
+        guard saved.retiredAccounts.allSatisfy({ $0 != saved.keychainAccount && $0 != saved.pending?.account }) else {
+            throw ClientError.message("设备凭证清理记录无效")
+        }
         for account in saved.retiredAccounts {
-            guard account != saved.keychainAccount, account != saved.pending?.account else { throw ClientError.message("设备凭证清理记录无效") }
             try await keychain.remove(account: account)
         }
         var next = saved; next.retiredAccounts = []
@@ -527,7 +540,10 @@ final class CompanionModel: ObservableObject {
             guard ["connecting", "online", "offline", "unauthorized", "stopped"].contains(state) else { error = .message("连接状态无效，请重试"); backend.stop(); return }
             status = state
             if state != "connecting" { retrying = false }
-            if state == "online" { checkPermissions(); refreshProjects() }
+            if state == "online" {
+                if saved.pending == nil { error = nil }
+                checkPermissions(); refreshProjects()
+            }
             if state == "unauthorized" {
                 cancelDesktop(message: "连接已失效")
                 if saved.pending == nil { attention?() }

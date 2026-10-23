@@ -45,7 +45,7 @@ final class DesktopWindows: NSObject, NSWindowDelegate {
         statusUI = DesktopWebView(resources: resources)
         workbench = DesktopWorkbenchWindow(contentRect: NSRect(x: 0, y: 0, width: 650, height: 360),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
-        status = DesktopStatusWindow(contentRect: NSRect(x: 0, y: 0, width: 346, height: 78), styleMask: .borderless, backing: .buffered, defer: false)
+        status = DesktopStatusWindow(contentRect: NSRect(x: 0, y: 0, width: PanelGeometry.width, height: PanelGeometry.height), styleMask: .borderless, backing: .buffered, defer: false)
         super.init()
         workbench.delegate = self
         workbench.title = "TinkerFin"; workbench.titleVisibility = .hidden
@@ -98,7 +98,7 @@ final class DesktopWindows: NSObject, NSWindowDelegate {
     func positionStatus() {
         guard wantsStatus, !closing, let button, let window = button.window, let screen = window.screen else { return }
         let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
-        guard let geometry = PanelGeometry(anchor: anchor, screen: screen.visibleFrame, contentHeight: 78, preferredWidth: 346) else { return }
+        guard let geometry = PanelGeometry(anchor: anchor, screen: screen.visibleFrame, contentHeight: PanelGeometry.height) else { return }
         status.setFrame(geometry.frame, display: true); status.makeKeyAndOrderFront(nil); button.state = .on
     }
 

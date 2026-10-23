@@ -104,9 +104,12 @@ describe('桌面真实动作边界', () => {
     const online: DesktopState = { ...state, connected: true, connection: 'online', connectionReason: 'authorization', service: 'https://studio.example.com', api: 'https://api.example.com' }
     await act(async () => publish(online))
     await click('连接')
-    expect(screen.getByLabelText('API 地址')).toHaveValue(online.api)
+    expect(screen.getByText('自动识别')).toBeVisible()
+    expect(screen.queryByLabelText('API 地址')).not.toBeInTheDocument()
     expect(screen.queryByText('新授权成功后将更换连接，本机执行会中断')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '打开 Studio' })).toBeEnabled()
+    await click('手动填写')
+    expect(screen.getByLabelText('API 地址')).toHaveValue(online.api)
     await click('恢复自动识别')
     expect(screen.getByRole('button', { name: '打开 Studio' })).toBeEnabled()
     fireEvent.change(screen.getByLabelText('服务地址'), { target: { value: 'https://next.example.com' } })
@@ -127,6 +130,27 @@ describe('桌面真实动作边界', () => {
     }
     expect(screen.getByText('研究用 Mac')).not.toHaveAttribute('title')
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('已有独立API地址默认自动识别，取消编辑及退出登录恢复自动模式', async () => {
+    const { state } = await mount({ api: 'https://api.example.com' })
+    await click('连接')
+    expect(screen.getByText('自动识别')).toBeVisible()
+    expect(screen.queryByLabelText('API 地址')).not.toBeInTheDocument()
+    await click('手动填写')
+    expect(screen.getByLabelText('API 地址')).toHaveValue(state.api)
+    fireEvent.change(screen.getByLabelText('API 地址'), { target: { value: 'https://draft.example.com' } })
+    await click('取消')
+    expect(screen.getByText('自动识别')).toBeVisible()
+    await click('手动填写')
+    fireEvent.change(screen.getByLabelText('API 地址'), { target: { value: 'https://draft.example.com' } })
+    fireEvent.keyDown(screen.getByLabelText('API 地址'), { key: 'Escape' })
+    expect(screen.getByText('自动识别')).toBeVisible()
+    await click('手动填写')
+    await click('我的'); await click('退出登录')
+    act(() => publish({ ...state, connected: false, connection: 'unpaired' }))
+    expect(screen.getByText('自动识别')).toBeVisible()
+    expect(screen.queryByLabelText('API 地址')).not.toBeInTheDocument()
   })
 
   it('名称保存失败保留草稿与同一勾选入口，错误说明与字段关联', async () => {

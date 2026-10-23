@@ -2,7 +2,8 @@ import AppKit
 
 /// 浮层按菜单栏按钮的单侧边缘对齐；优先向当前屏幕空间更充足的一侧展开
 struct PanelGeometry {
-    static let width = 346.0
+    static let width = 312.0
+    static let height = 56.0
     let frame: NSRect
     let maximumContentHeight: Double
 

@@ -21,21 +21,57 @@ async function open(page: Page, patch: Partial<DesktopState> = {}) {
     } } } }
   }, fixture(patch))
   await page.goto('/')
-  await expect(page.getByRole('navigation')).toBeVisible()
+  await expect(page.getByRole(patch.surface === 'status' ? 'status' : 'navigation')).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
 }
 
 for (const theme of ['light', 'dark'] as const) {
+  test(`${theme} 菜单栏设备与状态同一行且长名称不挤压操作`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 312, height: 56 })
+    await open(page, { theme, surface: 'status', name: "Yunsan's Mac 🐼" })
+    for (const connection of ['online', 'connecting', 'offline'] as const) {
+      await page.evaluate(connection => {
+        window.desktopTestState = { ...window.desktopTestState, revision: window.desktopTestState.revision + 1, connection, connected: connection === 'online' }
+        window.receiveDesktopState(window.desktopTestState)
+      }, connection)
+      const title = page.getByText("Yunsan's Mac 🐼", { exact: true })
+      const status = page.getByRole('status')
+      await expect(status).toHaveText(connection === 'online' ? '已连接' : connection === 'connecting' ? '连接中' : '未连接')
+      const nameBox = (await title.boundingBox())!, stateBox = (await status.boundingBox())!
+      expect(Math.abs(nameBox.y + nameBox.height / 2 - stateBox.y - stateBox.height / 2)).toBeLessThanOrEqual(1)
+      expect(stateBox.x).toBeGreaterThanOrEqual(nameBox.x + nameBox.width)
+      for (const label of ['设置', '退出']) {
+        const button = page.getByRole('button', { name: label })
+        const bounds = (await button.boundingBox())!
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(312)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(56)
+      }
+      await page.screenshot({ path: info.outputPath(`status-${connection}.png`) })
+    }
+    await page.evaluate(() => {
+      window.desktopTestState = { ...window.desktopTestState, revision: window.desktopTestState.revision + 1, locale: 'en', language: 'en', name: '非常长的研究设备名称 Long research workstation' }
+      window.receiveDesktopState(window.desktopTestState)
+    })
+    await expect(page.getByRole('status')).toHaveText('Disconnected')
+    await expect(page.getByText('非常长的研究设备名称 Long research workstation', { exact: true })).toHaveCSS('text-overflow', 'ellipsis')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight)).toBe(true)
+    await page.getByRole('button', { name: 'Settings', exact: true }).focus()
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await page.screenshot({ path: info.outputPath('status-long-name.png') })
+  })
+
   test(`${theme} 页面、边框与行末位置`, async ({ page }, info) => {
     const external: string[] = []
     page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:8770/')) external.push(request.url()) })
-    await open(page, { theme })
+    await open(page, { theme, api: 'https://api.example.com' })
     const refresh = page.getByRole('button', { name: '刷新', exact: true })
     const refreshBox = await refresh.boundingBox()
     expect(refreshBox?.x).toBe(594)
     expect(refreshBox?.width).toBe(32)
     await page.screenshot({ path: info.outputPath('workspace.png') })
     await page.getByRole('button', { name: '连接', exact: true }).click()
+    await expect(page.getByText('自动识别', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('API 地址')).toHaveCount(0)
     const service = page.getByLabel('服务地址')
     const control = service.locator('..')
     const shadow = await control.evaluate(node => getComputedStyle(node).boxShadow)

@@ -1,4 +1,5 @@
 import Darwin
+import Combine
 import Foundation
 import Security
 
@@ -28,7 +29,7 @@ func SecItemAdd(_ attributes: CFDictionary, _ result: UnsafeMutablePointer<CFTyp
     return Security.SecItemAdd(attributes, result)
 }
 
-/// 两个实际签名应用使用正式交接入口；合成账户和密钥不输出到日志或文件
+/// 真实签名应用使用正式凭证入口；合成密钥不输出到日志或文件
 @main
 @MainActor
 struct CredentialContracts {
@@ -47,8 +48,9 @@ struct CredentialContracts {
         do {
             let mode = arguments[1], directory = URL(fileURLWithPath: arguments[2], isDirectory: true)
             let keychain = KeychainStore()
-            if mode == "read" || mode == "remove" {
+            if mode == "read" || mode == "remove" || mode == "create" {
                 if mode == "read" { _ = try await keychain.read(account: arguments[3]) }
+                else if mode == "create" { _ = try await keychain.create(account: arguments[3]) }
                 else { try await keychain.remove(account: arguments[3]) }
             } else if mode == "setup" {
                 let handoff = try UpdateHandoff.read(directory)
@@ -85,6 +87,44 @@ struct CredentialContracts {
                         try await model.adoptUpdateCredential(handoff)
                         if mode == "adopted-crash" { _exit(42) }
                         try await model.settleUpdateCredential(handoff, installed: true)
+                        await model.shutdown()
+                    } catch { await model.shutdown(); throw error }
+                } else if mode == "restore-retired" || mode == "reject-retired" {
+                    let store = ConfigurationStore(directory: state)
+                    let before = try await store.read()
+                    let model = CompanionModel(state: state, resources: state.appendingPathComponent("host-resources"))
+                    let changes = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingNewest(8))
+                    let subscription = model.$status.sink { changes.continuation.yield($0) }
+                    defer { subscription.cancel(); changes.continuation.finish() }
+                    do {
+                        try await model.restore(connect: false)
+                        if mode == "reject-retired" {
+                            do {
+                                try await model.connectRestoredState()
+                                throw ClientError.message("退休集合接受了仍在使用的账户")
+                            } catch ClientError.message(let message) where message == "设备凭证清理记录无效" { }
+                            guard model.saved.retiredAccounts == before.retiredAccounts else {
+                                throw ClientError.message("拒绝清理时修改了退休集合")
+                            }
+                        } else {
+                            try await model.connectRestoredState()
+                            guard ["connecting", "online"].contains(model.status) else { throw ClientError.message("恢复未启动宿主") }
+                            var connecting = false
+                            for await status in changes.stream {
+                                if status == "online" { break }
+                                if status == "connecting" { connecting = true }
+                                if status == "failed" || connecting && status == "offline" { throw ClientError.message("恢复宿主未能连接") }
+                            }
+                            guard model.status == "online", model.saved.retiredAccounts.isEmpty else {
+                                throw ClientError.message("退休清理后没有恢复在线")
+                            }
+                        }
+                        let persisted = try await store.read()
+                        guard persisted.keychainAccount == before.keychainAccount,
+                              persisted.pending?.account == before.pending?.account,
+                              persisted.retiredAccounts == model.saved.retiredAccounts else {
+                            throw ClientError.message("退休清理改变了有效账户或持久化结果")
+                        }
                         await model.shutdown()
                     } catch { await model.shutdown(); throw error }
                 } else if mode == "cleanup" {

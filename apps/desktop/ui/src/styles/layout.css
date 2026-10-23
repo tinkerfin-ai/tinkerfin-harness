@@ -88,8 +88,13 @@
   .workbench .project-list { max-height: none; overflow: visible; }
   .workbench .project-item { padding: var(--space-2) 0; gap: var(--space-2); }
   .workbench .project-item > svg:first-child { width: 20px; height: 20px; color: var(--color-brand-text); fill: var(--color-brand-soft); }
-  .status-popover .device-title { font-size: var(--type-ui-size); line-height: var(--type-ui-line); }
-  .status-popover .status { font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+  .status-popover { padding: var(--space-3); gap: var(--space-2); }
+  .status-popover .device-glyph { width: var(--space-5); height: var(--space-5); background: none; }
+  .status-popover .device-glyph svg { width: var(--icon-md); height: var(--icon-md); }
+  .status-popover .device-summary { display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0; }
+  .status-popover .device-title { min-width: 0; font-size: var(--type-ui-size); line-height: var(--type-ui-line); }
+  .status-popover .status { flex: none; white-space: nowrap; margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+  .status-popover .popover-actions { flex: none; gap: 0; margin: 0; }
   .modal-backdrop:has(.desktop-update-dialog) {
     inset: auto; left: var(--update-frame-left); top: var(--update-frame-top);
     width: var(--update-frame-width); height: var(--update-frame-height);
