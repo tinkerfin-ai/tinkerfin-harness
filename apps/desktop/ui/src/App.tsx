@@ -30,6 +30,7 @@ function Workbench({ state }: { state: DesktopState }) {
   const [view, setView] = useState(() => initialView(state))
   const initialized = useRef(state.ready)
   const wasConnected = useRef(state.connected)
+  const savedConnection = useRef({ service: state.service, api: state.api })
   const page = state.connected ? view.page : 'connection'
   const updateOpen = state.update.phase !== 'idle'
   const change = (patch: Partial<ViewState>) => setView(previous => ({ ...previous, ...patch }))
@@ -40,12 +41,20 @@ function Workbench({ state }: { state: DesktopState }) {
   }, [state])
   useEffect(() => { if (initialized.current) void send({ type: 'save-view', view }) }, [view])
   useEffect(() => {
-    if (!state.connected) setView(previous => previous.page === 'connection' ? previous : { ...previous, page: 'connection' })
-    else if (!wasConnected.current) setView(previous => ({ ...previous, page: 'workspace', connectionForm: false }))
+    const configurationChanged = savedConnection.current.service !== state.service || savedConnection.current.api !== state.api
+    const newlyConnected = state.connected && !wasConnected.current
+    if (!state.connected) setView(previous => previous.page === 'connection' && !previous.editingName ? previous
+      : { ...previous, page: 'connection', editingName: false, name: state.name })
+    else if (newlyConnected || configurationChanged) {
+      setView(previous => ({ ...previous, page: newlyConnected ? 'workspace' : previous.page, connectionForm: false,
+        ...(configurationChanged ? { service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: state.api !== state.service } : {}) }))
+    }
+    if (state.connected) savedConnection.current = { service: state.service, api: state.api }
     wasConnected.current = state.connected
-  }, [state.connected])
+  }, [state.connected, state.service, state.api, state.name])
 
-  const navigate = (target: Page) => change({ page: target, ...(target === 'connection' ? { connectionForm: true } : {}) })
+  const navigate = (target: Page) => change({ page: target, editingName: false, name: state.name,
+    ...(target === 'connection' ? { connectionForm: true } : {}) })
   return <>
     <section className="client workbench" aria-label="TinkerFin" inert={updateOpen}>
       <div className="native-titlebar-space" aria-hidden="true" />
@@ -69,8 +78,8 @@ function Status({ state }: { state: DesktopState }) {
   const Icon = state.connected ? CircleCheck : connecting ? LoaderCircle : CircleMinus
   return <section className="client status-popover" aria-label="TinkerFin" inert={state.update.phase !== 'idle'}>
     <div className="device-glyph"><Laptop aria-hidden="true" /></div>
-    <div className="grow"><div className="device-title truncate" title={state.name}>{state.name}</div><div className={`status status--${state.connected ? 'online' : connecting ? '' : 'offline'}`} role="status"><Icon className={connecting && !state.connected ? 'spinner' : undefined} aria-hidden="true" /><span>{t(state.connected ? '已连接' : connecting ? '连接中' : '未连接')}</span></div></div>
-    <div className="popover-actions"><IconButton label={t('设置')} tooltip={t('设置')} icon={<Settings2 />} variant="ghost" onClick={() => void send({ type: 'open-workbench' })} /><IconButton label={t('退出')} tooltip={t('退出')} className="quit-button" icon={<Power />} variant="ghost" onClick={() => void send({ type: 'quit' })} /></div>
+    <div className="grow"><div className="device-title truncate">{state.name}</div><div className={`status status--${state.connected ? 'online' : connecting ? '' : 'offline'}`} role="status"><Icon className={connecting && !state.connected ? 'spinner' : undefined} aria-hidden="true" /><span>{t(state.connected ? '已连接' : connecting ? '连接中' : '未连接')}</span></div></div>
+    <div className="popover-actions"><IconButton label={t('设置')} icon={<Settings2 />} variant="ghost" onClick={() => void send({ type: 'open-workbench' })} /><IconButton label={t('退出')} className="quit-button" icon={<Power />} variant="ghost" onClick={() => void send({ type: 'quit' })} /></div>
   </section>
 }
 

@@ -72,6 +72,7 @@ def test_bundled_menu_bar_resources_and_client_url_scheme(app_bundle):
     assert metadata["CFBundleDevelopmentRegion"] == "en"
     assert set(metadata["CFBundleLocalizations"]) == {"en", "zh-Hans"}
     assert metadata["LSUIElement"] is True
+    assert metadata["LSMultipleInstancesProhibited"] is True
     assert "tinkerfin" in [
         scheme
         for item in metadata["CFBundleURLTypes"]

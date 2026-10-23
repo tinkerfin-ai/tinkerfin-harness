@@ -420,6 +420,7 @@ def build(
                         }
                     ],
                     "CFBundlePackageType": "APPL",
+                    "LSMultipleInstancesProhibited": True,
                     "CFBundleShortVersionString": release,
                     "CFBundleVersion": release,
                     "LSMinimumSystemVersion": "15.0",

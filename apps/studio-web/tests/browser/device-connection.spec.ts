@@ -87,7 +87,7 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1
     await expect(refresh).toHaveAttribute('aria-busy', 'true')
     await expect(open).toBeEnabled()
     await expect(download).toBeVisible()
-    await expect(dialog.getByRole('status')).toHaveText('正在刷新设备状态')
+    await expect(dialog.getByRole('status')).toHaveText('设备连接成功后会显示在这里')
     const during = await refresh.boundingBox()
     expect(during?.width).toBe(before?.width)
     expect(during?.height).toBe(before?.height)
@@ -104,7 +104,7 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1
     hold = false
     await route.fulfill({ json: { code: 0, message: 'success', data: [] } })
     await expect(refresh).toBeEnabled()
-    await expect(dialog.getByRole('status')).toHaveText('刷新完成，尚未连接设备')
+    await expect(dialog.getByRole('status')).toHaveText('设备连接成功后会显示在这里')
     await open.click()
     expect(await page.evaluate(() => window.clientLaunches)).toEqual(['tinkerfin://connect', 'tinkerfin://connect'])
     failure = true
@@ -117,12 +117,32 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1
     failure = false
     await dialog.getByRole('button', { name: '重试', exact: true }).click()
     await expect(dialog.getByRole('alert')).toHaveCount(0)
-    await expect(dialog.getByRole('status')).toHaveText('刷新完成，尚未连接设备')
-    devices = [device]
+    await expect(dialog.getByRole('status')).toHaveText('设备连接成功后会显示在这里')
+    devices = [{ ...device, online: false }]
     await page.evaluate(() => window.emitResourceChange('studio.devices.changed', 'devices'))
     await expect(dialog.getByRole('region', { name: '已授权设备' })).toContainText('我的 Mac')
-    await expect(dialog.getByText('设备已连接', { exact: true })).toBeVisible()
+    const reconnect = dialog.getByRole('button', { name: '重连', exact: true })
+    await reconnect.click()
+    expect(await page.evaluate(() => window.clientLaunches)).toEqual(['tinkerfin://connect', 'tinkerfin://connect', 'tinkerfin://connect'])
+    await expect(dialog.getByRole('status')).toHaveText('未连接')
+    await expect(dialog.getByText(/刷新完成/)).toHaveCount(0)
+    await page.screenshot({ path: info.outputPath('device-reconnect.png'), animations: 'disabled' })
+    devices = [device]
+    await page.evaluate(() => window.emitResourceChange('studio.devices.changed', 'devices'))
+    await expect(dialog.getByRole('status')).toHaveText('已连接')
+    await expect(reconnect).toHaveCount(0)
     await expect(dialog.getByRole('heading', { name: '等待设备连接' })).toHaveCount(0)
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    devices = [{ ...device, name: 'Research Mac · Daily reports and planning', online: false }]
+    await page.evaluate(() => {
+      localStorage.setItem('tinkerfin:language', 'en')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'tinkerfin:language', newValue: 'en' }))
+      window.emitResourceChange('studio.devices.changed', 'devices')
+    })
+    const english = page.getByRole('dialog', { name: 'Settings', exact: true })
+    await expect(english.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
+    await expect(english.getByRole('button', { name: 'Revoke access', exact: true })).toBeVisible()
+    expect(await english.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await page.screenshot({ path: info.outputPath('device-reconnect-english.png'), animations: 'disabled' })
   })
 }

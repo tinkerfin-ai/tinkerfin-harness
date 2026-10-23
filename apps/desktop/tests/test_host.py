@@ -317,8 +317,9 @@ async def test_cloud_approval_survives_companion_restart_without_local_model(
         await engine.dispose()
 
 
-async def test_handshake_eof_keeps_the_running_tool_and_does_not_repeat_effects(
-    tmp_path, native_sandbox, monkeypatch
+@pytest.mark.parametrize("disconnect", ["socket", "capabilities"])
+async def test_connection_failures_keep_the_running_tool_without_repeating_effects(
+    tmp_path, native_sandbox, monkeypatch, disconnect
 ):
     device_id, authorization, project_id = str(uuid4()), str(uuid4()), str(uuid4())
     configuration = CompanionConfiguration(
@@ -359,6 +360,8 @@ async def test_handshake_eof_keeps_the_running_tool_and_does_not_repeat_effects(
 
     async def respond(request: httpx.Request) -> httpx.Response:
         if request.method == "PUT" and request.url.path == "/api/devices/presence":
+            if disconnect == "capabilities":
+                raise httpx.ConnectError("Synthetic presence interruption")
             return httpx.Response(
                 200,
                 json={
@@ -504,7 +507,10 @@ async def test_handshake_eof_keeps_the_running_tool_and_does_not_repeat_effects(
                     try:
                         await until(ready, delivery, execution)
                         assert output.read_text() == "once" and not finished.exists()
-                        await sockets[0].close()
+                        if disconnect == "socket":
+                            await sockets[0].close()
+                        else:
+                            await host.refresh_capabilities()
                         await until(retry_entered[0], delivery, execution)
                         await until(detached, delivery, execution)
                         retry_allowed[0].set()
@@ -624,8 +630,15 @@ async def test_reconnect_classification_retains_authentication_and_fatal_errors(
         await host.aclose()
 
 
-async def test_temporary_http_handshake_failure_retries_without_swallowing_cancellation(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "error",
+    [
+        InvalidStatus(Response(503, "Unavailable", Headers())),
+        httpx.ReadTimeout("Synthetic presence timeout"),
+    ],
+)
+async def test_temporary_transport_failure_retries_without_swallowing_cancellation(
+    tmp_path, monkeypatch, error
 ):
     states: list[ConnectionState] = []
     attempts = 0
@@ -651,7 +664,7 @@ async def test_temporary_http_handshake_failure_retries_without_swallowing_cance
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise InvalidStatus(Response(503, "Unavailable", Headers()))
+            raise error
         raise asyncio.CancelledError
 
     async def retry(_delay: float) -> None:

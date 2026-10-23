@@ -24,6 +24,7 @@ it('设备由客户端发起连接，网页仅显示当前设备并明确撤销�
   expect(screen.queryByText('~/.tinkerfin/projects')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('配对码')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '撤销授权' }))
+  expect(screen.queryByRole('button', { name: '重连' })).not.toBeInTheDocument()
   expect(revoke).not.toHaveBeenCalled()
   expect(screen.getByRole('group', { name: '撤销授权' })).toHaveTextContent('再次使用需重新授权')
   fireEvent.click(screen.getByRole('button', { name: '撤销授权' }))
@@ -37,7 +38,7 @@ it('新会话默认修改前确认且请求不携带设备目标', () => {
   expect(payload.forwardedProps).not.toHaveProperty('localTarget')
 })
 
-it('刷新连接时禁用重复点击，空结果提供明确反馈并保留恢复入口', async () => {
+it('刷新连接时禁用重复点击，完成后保留入口且不追加成功提示', async () => {
   let complete!: (devices: LocalDevice[]) => void
   const fetch = vi.spyOn(api, 'fetchDevices').mockResolvedValueOnce([])
     .mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
@@ -58,7 +59,8 @@ it('刷新连接时禁用重复点击，空结果提供明确反馈并保留恢�
   await act(async () => { complete([]) })
   expect(refresh).toBeEnabled()
   expect(refresh).not.toHaveAttribute('aria-busy')
-  expect(screen.getByRole('status')).toHaveTextContent('刷新完成，尚未连接设备')
+  expect(screen.getByRole('status')).toHaveTextContent('设备连接成功后会显示在这里')
+  expect(screen.queryByText(/刷新完成/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '打开客户端' }))
   expect(open).toHaveBeenCalledTimes(3)
   expect(screen.getByRole('link', { name: '下载客户端' })).toHaveAttribute('href', 'https://github.com/tinkerfin-ai/tinkerfin-harness/releases/latest/download/TinkerFin.zip')
@@ -78,7 +80,23 @@ it('刷新失败后保留下载和打开入口，重试成功自动显示设备'
   fireEvent.click(screen.getByRole('button', { name: '重试' }))
   await screen.findByText('我的 Mac')
   expect(screen.queryByText('设备列表暂不可用')).not.toBeInTheDocument()
-  expect(screen.getByText('设备已连接')).toHaveAttribute('role', 'status')
+  expect(screen.getByRole('status')).toHaveTextContent('已连接')
   expect(screen.queryByRole('button', { name: '刷新连接状态' })).not.toBeInTheDocument()
   expect(fetch).toHaveBeenCalledTimes(3)
+})
+
+it('离线重连只打开客户端，真实在线结果到达后隐藏入口', async () => {
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  const revoke = vi.spyOn(api, 'revokeDevice').mockResolvedValue(undefined)
+  vi.spyOn(api, 'fetchDevices').mockResolvedValueOnce([device]).mockResolvedValueOnce([{ ...device, online: true }])
+  render(<DeviceSettings />)
+  fireEvent.click(await screen.findByRole('button', { name: '重连' }))
+  expect(open).toHaveBeenCalledExactlyOnceWith('tinkerfin://connect', '_self')
+  expect(revoke).not.toHaveBeenCalled()
+  expect(screen.getAllByRole('status')).toHaveLength(1)
+  expect(screen.getByRole('status')).toHaveTextContent('未连接')
+  fireEvent.click(screen.getByRole('button', { name: '刷新设备状态' }))
+  await screen.findByText('已连接')
+  expect(screen.queryByRole('button', { name: '重连' })).not.toBeInTheDocument()
+  expect(screen.getAllByRole('status')).toHaveLength(1)
 })

@@ -83,8 +83,8 @@
   .local-resources .lr-device-tile { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: var(--radius-lg); background: var(--lr-selected); color: var(--lr-text); }
   .local-resources .lr-device-tile svg { width: 21px; height: 21px; stroke-width: 1.45; }
   .local-resources .lr-card-device-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; align-items: flex-start; gap: 5px; }
-  .local-resources .lr-card-device-name { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: var(--type-meta-size); line-height: 20px; font-weight: var(--weight-medium); }
-  .local-resources .lr-device-actions { display: flex; flex: 0 0 auto; align-items: center; }
+  .local-resources .lr-card-device-name { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: var(--type-ui-size); line-height: var(--type-ui-line); font-weight: var(--weight-semibold); }
+  .local-resources .lr-device-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .local-resources .lr-revoke-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 10px; border: 1px solid var(--lr-border); border-radius: var(--radius-device-action); background: var(--lr-surface); color: var(--lr-revoke); font-size: var(--type-device-control-size); line-height: 18px; font-weight: var(--weight-ui); white-space: nowrap; transition: color var(--motion-device-hover) ease, background var(--motion-device-hover) ease, border-color var(--motion-device-hover) ease; }
   .local-resources .lr-revoke-button svg { width: 14px; height: 14px; stroke-width: 1.65; }
   .local-resources .lr-revoke-button:hover { background: var(--lr-revoke-hover); border-color: var(--lr-revoke-border-hover); }
@@ -103,7 +103,6 @@
   .local-resources .lr-download-link:hover { color: var(--color-brand-text); }
   .local-resources .lr-download-link:active { background: var(--lr-selected); }
   .local-resources .lr-download-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  .local-resources .lr-waiting-note { margin: 11px 0 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--lr-selected); color: var(--lr-subtle); font-size: var(--type-caption-size); line-height: 19px; }
   .computer-resources { display: inline-flex; min-width: 0; max-width: 100%; }
   .computer-resources__popover { position: fixed; inset: auto; margin: 0; padding: 0; border: 0; background: transparent; color: var(--lr-text); width: min(320px, calc(100vw - var(--space-8))); overflow: visible; }
   .local-resources .ui-button { font-family: var(--font-device-ui); box-shadow: none; }
@@ -133,7 +132,7 @@
   @media (max-width: 500px) {
     .local-resources .lr-device-card { padding: 15px 13px; }
     .local-resources .lr-card-device { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px 10px; }
-    .local-resources .lr-device-actions { grid-column: 2; justify-self: start; }
+    .local-resources .lr-device-actions { grid-column: 1 / -1; justify-self: end; justify-content: flex-end; }
     .local-resources .lr-content-heading { gap: 11px; }
   }
   @media (pointer: coarse) {

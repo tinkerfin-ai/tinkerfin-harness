@@ -38,6 +38,7 @@ struct DesktopUpdateState: Codable, Sendable {
     var percent: Double = 0
     var currentVersion = ""
     var targetVersion = ""
+    var failure: DesktopUpdateFailure = .none
 }
 
 /// WebView接收的完整展示状态；网络地址仅供展示，任何打开操作仍由原生复核

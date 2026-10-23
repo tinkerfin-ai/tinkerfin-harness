@@ -70,12 +70,20 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         startup = Task { [weak self] in
             guard let self else { return }
             do { try await model.restore(connect: false) }
+            catch is CancellationError { return }
             catch ApplicationLockError.alreadyRunning { requestApplicationTermination(); return }
             catch { }
             if model.ready {
-                do { try await updater.restoreHandoff() } catch { NSLog("TinkerFin 更新交接恢复失败：%@", String(describing: error)) }
+                do { try await updater.restoreHandoff() }
+                catch is CancellationError { return }
+                catch {
+                    NSLog("TinkerFin 更新交接恢复失败：%@", String(describing: error))
+                    requestApplicationTermination(); return
+                }
                 if updater.otherInstallerActive { requestApplicationTermination(); return }
-                do { try await model.connectRestoredState() } catch { }
+                do { try await model.connectRestoredState() }
+                catch is CancellationError { return }
+                catch { }
             }
             guard !Task.isCancelled else { return }
             restoring = false
@@ -107,7 +115,6 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         if restoring { workbench.ready = false; status.ready = false }
         windows?.workbenchUI.publish(workbench)
         windows?.statusUI.publish(status)
-        statusItem?.button?.toolTip = "TinkerFin · " + model.localization.text(model.statusText)
     }
 
     private func exitItem() -> NSMenuItem {
@@ -172,10 +179,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         guard requestedUpdateExit || presentation.update.phase == .idle || (updater.isUpdateLaunch && presentation.update.phase == .success) else { return .terminateCancel }
         if shutdown == nil {
             shutdown = Task {
+                startup?.cancel(); navigation?.cancel(); acknowledgement?.cancel()
+                await startup?.value; await navigation?.value; await acknowledgement?.value
                 await presentation.prepareToQuit()
                 if !updater.hasTransferredRestart { await updater.close() }
-                startup?.cancel(); navigation?.cancel(); acknowledgement?.cancel()
-                await model.shutdown(); await startup?.value; await navigation?.value; await acknowledgement?.value
+                await model.shutdown()
                 await windows?.close(); windows = nil
                 if let localeObserver { NotificationCenter.default.removeObserver(localeObserver) }
                 localeObserver = nil; appearance = nil; languageSubscription = nil; presentation.close()

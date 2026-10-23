@@ -4,7 +4,7 @@
 
 ## 安装与连接
 
-1. 从 [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases) 下载 TinkerFin Desktop 的 `TinkerFin.zip`，解压并将 `TinkerFin.app` 移到“应用程序”。无需安装开发工具或自行编译。
+1. 从 [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases) 下载 `TinkerFin.zip`，解压后放到 `/Applications/TinkerFin.app`；已有客户端时先退出并选择“替换”。无需开发工具或自行编译。
 2. 打开客户端，在“连接”页填写服务地址，再在浏览器登录并授权。菜单栏图标打开状态浮层，其中的设置按钮进入工作台。API 使用独立地址时可展开填写；地址不含 `/api`。
 3. 客户端显示“已连接”后，在 Studio 网页发起会话；顶部“本机资源”可查看设备状态和当前会话的确认选择。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
 
@@ -12,7 +12,7 @@
 
 在“连接”页修改服务地址可连接其他 Studio；新授权成功后停止原服务的本机执行并切换。地址须使用 HTTPS，HTTP 仅允许本机回环开发地址。网页部署应设置 `VITE_STUDIO_API_ADDRESS`，供客户端发现 API；无法发现时需要手动填写。
 
-在“我的”查看当前版本并检查更新。确认后客户端下载并校验官方发行包，等本机操作完成后安装、重新启动；开始安装前可以取消。连接授权、本机偏好和未提交的编辑内容会保留。
+在“我的”查看当前版本并检查更新。确认后客户端下载并校验官方发行包，等本机操作完成后替换安装，旧客户端退出后启动新版；开始安装前可以取消。连接授权、本机偏好和未提交的编辑内容会保留。同一机器只运行一个客户端，下载副本须先替换安装。
 
 “我的 → 退出登录”撤销本设备授权并断开连接，不退出浏览器中的 Studio 账号。关闭或最小化工作台会将其收回菜单栏；菜单栏中的“退出”结束整个客户端。
 
@@ -25,7 +25,7 @@ uv sync --locked --all-packages
 uv run python -m scripts.desktop_dev
 ```
 
-开发入口按当前桌面源码及其依赖选择应用；输入变化时重建，只有 Studio 服务端或无关网页代码变化时复用已有应用。`--build-only` 只构建。切换工作树前先退出正在运行的 TinkerFin，避免多个客户端占用同一设备状态。
+开发入口按桌面源码及依赖选择构建；输入变化时重建，无关服务端或网页修改复用已有产物。构建后在 Finder 中显示应用，退出当前客户端并替换到 `/Applications/TinkerFin.app` 后运行。`--build-only` 只构建。
 
 生成独立分发包：
 

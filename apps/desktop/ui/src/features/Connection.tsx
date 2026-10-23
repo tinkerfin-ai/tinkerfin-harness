@@ -27,7 +27,7 @@ export function Connection({ state, view, change }: Props) {
   const action = useAction()
   const [authorizationError, setAuthorizationError] = useState('')
   const busy = action.pending || state.busy === 'connect'
-  const changed = state.connected && (view.service.trim().replace(/\/$/, '') !== state.service || (view.manualAPI && view.api.trim() ? view.api.trim().replace(/\/$/, '') : state.service) !== state.api)
+  const changed = state.connected && (view.service.trim().replace(/\/$/, '') !== state.service || (view.manualAPI && view.api.trim() ? view.api.trim().replace(/\/$/, '') : state.api) !== state.api)
   const awaiting = state.authorizationPhase !== 'idle' || state.connection === 'authorizing'
   const connecting = state.connection === 'connecting' || state.connection === 'loading'
   const disconnected = state.connection === 'offline' && (!view.connectionForm || !state.ready)

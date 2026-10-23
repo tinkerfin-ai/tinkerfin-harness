@@ -101,7 +101,7 @@ test('粗指针导航与动作均至少44px，强制颜色保留系统字段边�
 test('更新弹框阶段保留焦点，锁定阶段不接受Escape', async ({ page }, info) => {
   await open(page)
   await page.evaluate(() => {
-    window.desktopTestState = { ...window.desktopTestState, revision: 2, update: { phase: 'available', percent: 0, currentVersion: '0.1.1', targetVersion: '0.1.2' } }
+    window.desktopTestState = { ...window.desktopTestState, revision: 2, update: { phase: 'available', percent: 0, currentVersion: '0.1.1', targetVersion: '0.1.2', failure: 'none' } }
     window.receiveDesktopState(window.desktopTestState)
   })
   const dialog = page.getByRole('dialog')

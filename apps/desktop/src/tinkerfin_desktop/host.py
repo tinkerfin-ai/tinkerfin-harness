@@ -428,9 +428,15 @@ class CompanionHost:
                     await self.aclose()
                     await self._report("unauthorized")
                     return
-                # 握手前断流由 websockets 包装，沿用其公开分类保留协议错误
+                # HTTP能力同步的网络中断同样只结束连接；其他握手错误沿用websockets公开分类
                 if (
-                    not isinstance(error, CloudError | ConnectionClosed)
+                    not isinstance(
+                        error,
+                        CloudError
+                        | ConnectionClosed
+                        | httpx.NetworkError
+                        | httpx.TimeoutException,
+                    )
                     and process_exception(error) is not None
                 ):
                     raise

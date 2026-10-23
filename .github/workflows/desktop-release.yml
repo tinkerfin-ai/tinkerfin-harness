@@ -102,7 +102,7 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
           Apple Silicon · macOS 15+
 
-          Download `TinkerFin.zip`, extract it and move `TinkerFin.app` to Applications. Open the app, enter your Studio address and authorize the connection in your browser. Python, Node.js and browser tools are included; users do not need to compile anything.
+          Download `TinkerFin.zip`, extract it and install it at `/Applications/TinkerFin.app`. Quit any installed copy and choose Replace before opening the new app. Enter your Studio address and authorize the connection in your browser. Python, Node.js and browser tools are included; users do not need to compile anything.
 
           This build is ad-hoc signed and is **not notarized by Apple**. If macOS blocks it, open System Settings → Privacy & Security and choose Open Anyway for TinkerFin after checking the download source. Do not disable Gatekeeper.
 

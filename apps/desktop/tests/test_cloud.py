@@ -1,7 +1,9 @@
 """执行授权、附件原件与设备凭证的 HTTP 边界"""
 
+import asyncio
 import base64
 import json
+from http import HTTPStatus
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,9 +11,12 @@ import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import InvalidStatus
+from websockets.http11 import Request, Response
 
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_contracts.media import Attachment
+from tinkerfin_desktop import cloud as cloud_module
 from tinkerfin_desktop.cloud import CloudError, DeviceCapabilities, StudioClient
 from tinkerfin_desktop.configuration import (
     CompanionConfiguration,
@@ -266,3 +271,120 @@ async def test_current_capabilities_update_over_http_without_replacing_tool_sock
                 assert await socket.recv() == "tool-transport-still-owned"
             assert not await cloud.update_capabilities(updated)
     assert len(observed) == 1
+
+
+@pytest.mark.parametrize("cross_origin", [False, True])
+async def test_device_socket_rejects_redirects_without_forwarding_credentials(
+    tmp_path, cross_origin
+):
+    identity = configuration(tmp_path)
+    requests: list[tuple[str, str | None]] = []
+    origin_port = 0
+
+    async def unused(socket: ServerConnection) -> None:
+        await socket.wait_closed()
+
+    def reject(socket: ServerConnection, request: Request) -> Response:
+        requests.append((request.path, request.headers.get("Authorization")))
+        return socket.respond(HTTPStatus.FORBIDDEN, "Synthetic target")
+
+    async with serve(unused, "127.0.0.1", 0, process_request=reject) as destination:
+        target_port = next(iter(destination.sockets)).getsockname()[1]
+
+        def redirect(socket: ServerConnection, request: Request) -> Response:
+            if request.path != "/api/devices/connect":
+                return reject(socket, request)
+            requests.append((request.path, request.headers.get("Authorization")))
+            response = socket.respond(HTTPStatus.FOUND, "Synthetic redirect")
+            port = target_port if cross_origin else origin_port
+            response.headers["Location"] = f"ws://127.0.0.1:{port}/redirected"
+            return response
+
+        async with serve(unused, "127.0.0.1", 0, process_request=redirect) as origin:
+            origin_port = next(iter(origin.sockets)).getsockname()[1]
+            identity = identity.model_copy(
+                update={"server": f"http://127.0.0.1:{origin_port}"}
+            )
+            async with httpx.AsyncClient() as client:
+                with pytest.raises(InvalidStatus) as failure:
+                    async with StudioClient(identity, client).connect(
+                        DeviceCapabilities()
+                    ):
+                        pytest.fail("设备握手接受了重定向")
+                assert failure.value.response.status_code == 302
+    assert requests == [("/api/devices/connect", identity.authorization)]
+
+
+@pytest.mark.parametrize("end", ["deadline", "cancel"])
+async def test_device_identity_handshake_is_bounded_and_releases_connection(
+    tmp_path, monkeypatch, end
+):
+    identity = configuration(tmp_path)
+    received, closed = asyncio.Event(), asyncio.Event()
+    deadlines: list[asyncio.Timeout] = []
+    handshakes = 0
+
+    def controlled_timeout(seconds: float) -> asyncio.Timeout:
+        assert seconds == 10
+        deadline = asyncio.timeout(None)
+        deadlines.append(deadline)
+        return deadline
+
+    monkeypatch.setattr(cloud_module, "timeout", controlled_timeout)
+
+    async def broker(socket: ServerConnection) -> None:
+        nonlocal handshakes
+        handshakes += 1
+        await socket.recv()
+        if handshakes == 1:
+            received.set()
+            await socket.wait_closed()
+            closed.set()
+        else:
+            await socket.send(
+                json.dumps(
+                    {
+                        "device_id": identity.device_id,
+                        "namespace": identity.namespace,
+                        "name": "Test Mac",
+                        "connection_id": str(uuid4()),
+                    }
+                )
+            )
+            await socket.wait_closed()
+
+    async with serve(broker, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        identity = identity.model_copy(update={"server": f"http://127.0.0.1:{port}"})
+        async with httpx.AsyncClient() as client:
+            cloud = StudioClient(identity, client)
+
+            async def opening() -> None:
+                async with cloud.connect(DeviceCapabilities()):
+                    pytest.fail("缺失身份回复的握手被接受")
+
+            attempt = asyncio.create_task(opening())
+            waiting = asyncio.create_task(received.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    (attempt, waiting), return_when=asyncio.FIRST_COMPLETED
+                )
+                if attempt in done:
+                    attempt.result()
+                assert received.is_set() and len(deadlines) == 1
+                if end == "deadline":
+                    deadlines[0].reschedule(float("-inf"))
+                    with pytest.raises(TimeoutError):
+                        await attempt
+                else:
+                    attempt.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await attempt
+                await closed.wait()
+                assert not await cloud.update_capabilities(DeviceCapabilities())
+                async with cloud.connect(DeviceCapabilities()):
+                    assert handshakes == 2
+            finally:
+                attempt.cancel()
+                waiting.cancel()
+                await asyncio.gather(attempt, waiting, return_exceptions=True)

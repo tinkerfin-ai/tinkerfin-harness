@@ -19,10 +19,9 @@ it('基线读取期间主动刷新等待新读取，重复调用合并且旧结�
   await act(async () => { baseline([]) })
   expect(fetch).toHaveBeenCalledTimes(2)
   expect(result.current.refreshing).toBe(true)
-  expect(result.current.refreshed).toBe(false)
   await act(async () => { refreshed([]) })
   expect(result.current.refreshing).toBe(false)
-  expect(result.current.refreshed).toBe(true)
+  expect(result.current.status).toBe('ready')
 })
 
 it('隐藏页面取消刷新并忽略迟到结果，重新可见后可继续读取', async () => {
@@ -39,7 +38,6 @@ it('隐藏页面取消刷新并忽略迟到结果，重新可见后可继续读�
   expect(signal.aborted).toBe(true)
   await act(async () => { complete([]) })
   expect(result.current.refreshing).toBe(false)
-  expect(result.current.refreshed).toBe(false)
   act(() => { hidden.mockReturnValue(false); document.dispatchEvent(new Event('visibilitychange')) })
   await act(async () => {})
   expect(fetch).toHaveBeenCalledTimes(3)

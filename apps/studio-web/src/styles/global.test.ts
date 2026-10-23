@@ -229,7 +229,7 @@ describe('前端视觉契约', () => {
           ['.local-resources .lr-device-name', 'var(--weight-medium)'],
           ['.local-resources .lr-option-title', 'var(--weight-medium)'],
           ['.local-resources .lr-action', 'var(--weight-medium)'],
-          ['.local-resources .lr-card-device-name', 'var(--weight-medium)'],
+          ['.local-resources .lr-card-device-name', 'var(--weight-semibold)'],
           ['.local-resources .lr-empty h4', 'var(--weight-medium)'],
           ['.automation-task-name', 'var(--weight-semibold)'],
           ['.skills-icon', 'var(--weight-semibold)'],
