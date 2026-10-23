@@ -64,7 +64,7 @@ def build_attachment_tools(
         file_path 供文件工具使用；命令及脚本中的文件读取参数都使用 shell_path。
         file_path 是虚拟路径，不能当作容器中的绝对路径。
         图片如有 preview_file_path，可先读取预览；文档按实际格式选择脚本处理。
-        修改工作文件不会改变原附件，需要交付修改结果时调用 deliver_file。
+        修改工作文件不会改变原附件，需要交付修改结果时调用 deliver_files。
 
         Args:
             attachment_id: 当前会话或自动化附件集合中的文件标识
@@ -100,7 +100,7 @@ def build_attachment_tools(
     ) -> str:
         """在工作区生成 Markdown、Excel、中文 PDF 或柱状图，不自动交付
 
-        可以先读取或修改工作文件；决定交给用户时调用 deliver_file。
+        可以先读取或修改工作文件；决定交给用户时调用 deliver_files。
 
         Args:
             name: 工作文件名称，扩展名须与 kind 一致

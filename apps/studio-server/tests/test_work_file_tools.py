@@ -123,7 +123,10 @@ async def test_import_authorizes_before_copying_and_keeps_original(
         service=attachments, user_id=1, collection_id="run"
     )[0]
     await deliver.ainvoke(
-        {"runtime": runtime, "file_path": imported["file_path"], "name": "result.md"}
+        {
+            "runtime": runtime,
+            "files": [{"file_path": imported["file_path"], "name": "result.md"}],
+        }
     )
     saved = await attachments.list_collection(user_id=1, collection_id="run")
     assert len(saved) == 2

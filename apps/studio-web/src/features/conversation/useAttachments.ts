@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { Attachment } from './attachments/content'
 import { removeDraftAttachment, uploadAttachment } from './attachments/client'
 import { translateCurrent } from '../../i18n'
+import { ApiError } from '../../api/shared/http'
 
 export interface DraftAttachment {
   id: string
@@ -83,7 +84,7 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
           })
           .catch((reason) => {
             if (!alive.current || controller.signal.aborted) return
-            const message = reason instanceof Error ? reason.message : '上传失败，请重试'
+            const message = reason instanceof ApiError ? reason.message : translateCurrent('附件传输失败，请检查网络后重试')
             latestErrorHandler.current?.(message)
             update(
               latest.current.map((value) =>
@@ -91,10 +92,7 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
                   ? {
                       ...value,
                       state: 'error',
-                      error:
-                        reason instanceof Error
-                          ? reason.message
-                          : '上传失败，请重试',
+                      error: message,
                     }
                   : value,
               ),
@@ -138,33 +136,21 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
       const items = [...latest.current]
       let failure: string | undefined
       for (const file of files) {
-        const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-        if (
-          ![
-            'png',
-            'jpg',
-            'jpeg',
-            'webp',
-            'gif',
-            'pdf',
-            'docx',
-            'xlsx',
-            'pptx',
-            'md',
-            'markdown',
-            'zip',
-          ].includes(ext)
-        ) {
-          failure = '仅支持图片、Markdown、PDF、Office 文档和技能 ZIP'
+        const ext = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() ?? '' : ''
+        if (file.size === 0) {
+          failure = translateCurrent('文件为空，请选择有内容的文件')
           continue
         }
-        if (
-          items.length >= 5 ||
-          file.size > 10 * 1024 ** 2 ||
-          items.reduce((sum, item) => sum + item.size, 0) + file.size >
-            25 * 1024 ** 2
-        ) {
-          failure = '最多 5 个附件，单个 10 MiB，合计 25 MiB'
+        if (items.length >= 5) {
+          failure = translateCurrent('一次最多添加 5 个附件')
+          continue
+        }
+        if (file.size > 10 * 1024 ** 2) {
+          failure = translateCurrent('单个附件不能超过 10 MiB')
+          continue
+        }
+        if (items.reduce((sum, item) => sum + item.size, 0) + file.size > 25 * 1024 ** 2) {
+          failure = translateCurrent('一次附件总大小不能超过 25 MiB')
           continue
         }
         items.push({

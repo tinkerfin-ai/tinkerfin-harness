@@ -226,7 +226,8 @@ class AttachmentSupport:
 
     File reads are borrowed from the host, which owns storage and authorizes each
     read. Content is resolved only for the actual destination model. Unsupported
-    files remain explicit references for file-reading tools. This class does not
+    files and files outside the request budget remain explicit references for
+    file-reading tools. This class does not
     parse documents, transcribe audio, or extract video frames.
 
     The same capability check applies to native media in messages and tool results.
@@ -263,9 +264,12 @@ class AttachmentSupport:
                 Profiles identify media families, not every supported encoding.
                 Supply this check when the adapter accepts a narrower set of formats.
                 A positive result requires the model adapter to accept that format.
-            max_attachments: Maximum distinct recent supported files read per call.
-            max_bytes: Maximum total resolved bytes before base64 encoding per call.
-                Oversized content raises ValueError before provider invocation.
+            max_attachments: Maximum distinct recent supported files considered
+                per call, with the most recently referenced file considered first.
+            max_bytes: Maximum total bytes resolved through read_content and included
+                per call before base64 encoding. Inline media is outside this budget.
+                Files that do not fit remain explicit references for
+                file-reading tools; the original messages are not changed.
 
         Raises:
             TypeError: Readers or capability checks are not callable, or limits
@@ -310,19 +314,42 @@ class AttachmentSupport:
                 capabilities[mime_type] = supported
             return capabilities[mime_type]
 
-        recent: dict[str, None] = {}
+        recent: dict[str, Attachment] = {}
         for message in source:
             if isinstance(message.content, list):
                 for block in message.content:
                     attachment = _content_attachment(block)
                     if attachment is not None and supports(attachment.mime_type):
                         recent.pop(attachment.id, None)
-                        recent[attachment.id] = None
-        selected = set(list(recent)[-self._max_attachments :])
+                        recent[attachment.id] = attachment
+        candidates = list(recent.values())[-self._max_attachments :]
+        selected = {attachment.id for attachment in candidates}
+        available: dict[str, AttachmentContent] = {}
+        unavailable: set[str] = set()
+        deferred: set[str] = set()
+        remaining_bytes = self._max_bytes
+        if self._read_content is not None:
+            # Prefer recent references without reordering messages. The host
+            # authorizes and bounds each read; only fitting
+            # content is retained, and each file is resolved once per request.
+            for attachment in reversed(candidates):
+                try:
+                    resolved = await self._read_content(attachment)
+                except FileNotFoundError:
+                    unavailable.add(attachment.id)
+                    continue
+                if not supports(resolved.mime_type):
+                    raise ValueError(
+                        "resolved attachment MIME type is not supported by the model"
+                    )
+                if len(resolved.data) > remaining_bytes:
+                    deferred.add(attachment.id)
+                    continue
+                available[attachment.id] = resolved
+                remaining_bytes -= len(resolved.data)
         messages: list[_MessageT | HumanMessage] = []
         user_media: list[str | dict[str, Any]] = []
         resolved_ids: set[str] = set()
-        total_bytes = 0
         for message in source:
             if not isinstance(message.content, list):
                 messages.append(message)
@@ -378,9 +405,7 @@ class AttachmentSupport:
                     )
                     continue
                 resolved_ids.add(attachment.id)
-                try:
-                    resolved = await self._read_content(attachment)
-                except FileNotFoundError:
+                if attachment.id in unavailable:
                     blocks.append(
                         {
                             "type": "text",
@@ -390,13 +415,19 @@ class AttachmentSupport:
                         }
                     )
                     continue
-                total_bytes += len(resolved.data)
-                if total_bytes > self._max_bytes:
-                    raise ValueError("resolved attachment content exceeds max_bytes")
-                if not supports(resolved.mime_type):
-                    raise ValueError(
-                        "resolved attachment MIME type is not supported by the model"
+                if attachment.id in deferred:
+                    blocks.append(
+                        {
+                            "type": "text",
+                            "text": caption
+                            + ". Content was not included in this model request: "
+                            "it exceeds the remaining attachment byte budget. "
+                            "The file remains stored; use an available file-reading "
+                            "tool to inspect it, in sections if needed.",
+                        }
                     )
+                    continue
+                resolved = available[attachment.id]
                 content = _model_content(attachment, resolved)
                 blocks.append({"type": "text", "text": caption})
                 if isinstance(message, HumanMessage):

@@ -400,7 +400,6 @@ export function Composer({
               type="file"
               hidden
               multiple
-              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.md,.markdown,.zip"
               onChange={(event) => {
                 onAddAttachments(Array.from(event.target.files ?? []))
                 event.target.value = ''

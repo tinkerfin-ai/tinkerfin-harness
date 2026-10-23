@@ -15,6 +15,8 @@ import {
   TextSearch,
   Trash2,
   Wrench,
+  Files,
+  TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -23,6 +25,7 @@ import type { Message } from '../../../types'
 import { useI18n } from '../../../i18n'
 import { isTranslationKey } from '../../../i18n/messages'
 import { ConversationDetailRow } from './ConversationDetailRow'
+import { readDeliveryResults } from '../attachments/deliveryResult'
 
 type MessageStatus = NonNullable<Message['meta']>['status']
 
@@ -33,6 +36,7 @@ interface ToolPresentation {
 }
 
 const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
+  deliver_files: { title: '交付文件', icon: Files, summaryKeys: [] },
   ls: { title: 'List', icon: FolderTree, summaryKeys: ['path'] },
   read_file: { title: 'Read', icon: FileText, summaryKeys: ['file_path', 'path'] },
   write_file: { title: 'Write', icon: FilePlus2, summaryKeys: ['file_path', 'path'] },
@@ -157,12 +161,19 @@ export function ToolCallRow({
   const displayedTitle = computer && operation !== 'tools' ? t('本机 · {action}', { action }) : action
   const ToolIcon = presentation?.icon ?? Wrench
   const status = message.meta?.status ?? 'completed'
+  const delivery = readDeliveryResults(message)
+  const failedFiles = delivery?.filter(item => item.status === 'failed').length ?? 0
+  const deliveredFiles = new Set(delivery?.flatMap(item => item.status === 'delivered' ? [item.attachment_id] : [])).size
+  const params = operation === 'deliver_files' ? parseParams(message.meta?.params ?? '') : null
+  const deliverySummary = delivery
+    ? t('已交付 {count} 个文件', { count: deliveredFiles }) + (failedFiles ? ` · ${t('{count} 项失败', { count: failedFiles })}` : '')
+    : params && Array.isArray(params.files) ? t('{count} 个文件', { count: params.files.length }) : ''
   const failure = status === 'failed' && Boolean(message.meta?.result)
     ? firstLine(message.meta?.result ?? '')
     : ''
   const summary = presentationOverride?.summary !== undefined
     ? presentationOverride.summary
-    : failure || toolSummary(message, operation, presentation)
+    : failure && !delivery ? failure : deliverySummary || toolSummary(message, operation, presentation)
   return <ConversationDetailRow id={message.id}
     className={`tool-row ${status}${className ? ` ${className}` : ''}`} data-tool-name={toolName}
     title={presentationOverride?.title ?? displayedTitle}
@@ -170,7 +181,8 @@ export function ToolCallRow({
     statusLabel={statusText(status, t)}
     icon={status === 'failed' || status === 'cancelled'
       ? <span className={`tool-row-state-dot is-${status}`} />
-      : presentationOverride?.icon ?? <ToolIcon size={14} strokeWidth={2} />}
+      : failedFiles ? <TriangleAlert className="delivery-warning" size={14} strokeWidth={2} />
+        : presentationOverride?.icon ?? <ToolIcon size={14} strokeWidth={2} />}
     open={open} onOpenChange={onOpenChange}>
     {children}
   </ConversationDetailRow>

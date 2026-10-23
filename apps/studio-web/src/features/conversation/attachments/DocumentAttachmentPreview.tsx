@@ -10,15 +10,16 @@ import { AttachmentReferenceContext } from './context'
 import { useAttachmentDownload } from './useAttachmentDownload'
 import {
   documentFormat, DocumentPreviewError, DOCUMENT_PREVIEW_BYTES, DOCUMENT_PREVIEW_CHARACTERS,
+  readTextPreview,
   type OfficePreview, type PreviewFailure,
 } from './documentPreview'
 import { readOfficePreview } from './readOfficePreview'
 import { sanitizeDocumentHtml } from './sanitizeDocumentHtml'
 import { AttachmentFileIcon } from './AttachmentFileIcon'
 import { AttachmentViewerTitle } from './AttachmentViewerTitle'
-import { formatAttachmentSize } from './attachmentPresentation'
+import { attachmentFileType, formatAttachmentSize } from './attachmentPresentation'
 
-type Content = OfficePreview | { kind: 'markdown'; text: string; truncated: boolean } | { kind: 'pdf'; url: string }
+type Content = OfficePreview | { kind: 'markdown' | 'text'; text: string; truncated: boolean } | { kind: 'pdf'; url: string }
 type Preview =
   | { phase: 'loading' }
   | { phase: 'unsupported' }
@@ -65,7 +66,9 @@ export function DocumentAttachmentPreview({
         const bytes = await blob.arrayBuffer()
         if (controller.signal.aborted) return
         let content: Content
-        if (format === 'markdown') {
+        if (format === 'text') {
+          content = readTextPreview(bytes)
+        } else if (format === 'markdown') {
           const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
           if (text.includes('\0')) throw new DocumentPreviewError('invalid')
           content = { kind: 'markdown', text: text.slice(0, DOCUMENT_PREVIEW_CHARACTERS), truncated: text.length > DOCUMENT_PREVIEW_CHARACTERS }
@@ -95,7 +98,9 @@ export function DocumentAttachmentPreview({
     ? t('文档超出预览限制，请下载查看')
     : preview.phase === 'failed' && preview.reason === 'timeout'
       ? t('文档解析超时，请下载查看或重试')
-      : t('文档暂时无法打开，请重试')
+      : preview.phase === 'failed' && preview.reason === 'encoding'
+        ? t('无法按 UTF-8 读取，请下载原文件并指定编码或转换为 UTF-8')
+        : t('文档暂时无法打开，请重试')
   const format = documentFormat(attachment.mime_type)
   const formatLabel = format === 'docx'
     ? t('Word 文档')
@@ -107,7 +112,7 @@ export function DocumentAttachmentPreview({
           ? 'PDF'
           : isPptx
             ? 'PPTX'
-          : t('未知文件')
+          : attachmentFileType(attachment).label
   return (
     <Dialog
       open fullScreen presentation="detail"
@@ -176,9 +181,13 @@ export function DocumentAttachmentPreview({
           </div>}
           {preview.phase === 'failed' && <div className="attachment-error" role="status">
             {failure}
-            {preview.reason !== 'size' && <Button type="button" variant="ghost" onClick={() => { setPreview({ phase: 'loading' }); setAttempt(value => value + 1) }}>
+            {preview.reason !== 'size' && preview.reason !== 'encoding' && <Button type="button" variant="ghost" onClick={() => { setPreview({ phase: 'loading' }); setAttempt(value => value + 1) }}>
               {t('重试预览')}
             </Button>}
+          </div>}
+          {content?.kind === 'text' && <div className="attachment-document-page attachment-document-page--text">
+            {content.truncated && <p className="attachment-preview-note">{t('仅预览前 200 文本行或 10 万字符，下载可查看完整文件')}</p>}
+            {content.text ? <pre className="attachment-text-source">{content.text}</pre> : <p>{t('此文档为空')}</p>}
           </div>}
           {content?.kind === 'markdown' && <div className="attachment-document-page">
             {content.text.trim() ? <MarkdownContent content={content.text} allowRemoteImages={false} /> : <p>{t('此文档为空')}</p>}

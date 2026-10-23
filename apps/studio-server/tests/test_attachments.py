@@ -131,12 +131,90 @@ async def test_invalid_type_and_path_do_not_publish_files(attachments):
     for name, data in [
         ("../x.png", png()),
         ("fake.png", b"not an image"),
-        ("file.exe", b"binary"),
     ]:
         with pytest.raises(BusinessException):
             await attachments.upload(
                 project_id="project-1", user_id=1, name=name, chunks=byte_chunks(data)
             )
+
+
+@pytest.mark.parametrize(
+    "name,data,mime",
+    [
+        ("订单.csv", '\ufeff编号,说明\r\n00123,"中文,引号"\r\n'.encode(), "text/csv"),
+        ("记录.txt", "中文记录".encode("gb18030"), "text/plain"),
+        ("待修复.json", b'{"id":', "application/json"),
+        ("页面.html", b"<script>alert(1)</script>", "text/html"),
+        ("run.py", b"print('hello')\n", "text/x-python"),
+        ("README", b"original\x00bytes", "application/octet-stream"),
+        ("pdf", b"plain text", "application/octet-stream"),
+        ("jpg", b"plain text", "application/octet-stream"),
+        ("docx", b"plain text", "application/octet-stream"),
+        ("program.exe", b"MZ\x00\xff", "application/octet-stream"),
+        ("资料.zip", office_container("orders.csv", b"id\n00123\n"), "application/zip"),
+    ],
+)
+async def test_general_file_upload_and_confirmation_preserve_original_bytes(
+    attachments, attachment_storage, name, data, mime
+):
+    attachment_id, _ = await attachments.request_upload(
+        project_id="project-1", user_id=1, name=name, size_bytes=len(data)
+    )
+    attachment_storage.objects[attachment_id + "-upload"] = data
+    file = await attachments.complete_upload(attachment_id, user_id=1)
+    assert (file.name, file.mime_type, file.size_bytes) == (name, mime, len(data))
+    assert (await attachments.read(file.id, user_id=1))[1] == data
+    assert (await attachments.download_url(file.id, user_id=1)).url.endswith(file.id)
+    assert set(attachment_storage.objects) == {file.id}
+
+
+async def test_invalid_file_reports_specific_safe_reason(attachments):
+    with pytest.raises(BusinessException, match="Markdown 文字编码无法识别"):
+        await attachments.upload(
+            project_id="project-1",
+            user_id=1,
+            name="bad.md",
+            chunks=byte_chunks(b"\xff"),
+        )
+    with pytest.raises(BusinessException, match="文件名须"):
+        await attachments.request_upload(
+            project_id="project-1", user_id=1, name="../file.csv", size_bytes=4
+        )
+
+
+async def test_delivery_identity_is_scoped_to_execution_collection(attachments):
+    identities = []
+    for collection in ("first", "second"):
+        await attachments.create_collection(
+            project_id="project-1",
+            user_id=1,
+            collection_id=collection,
+            purpose="execution",
+            attachment_ids=(),
+            configuration={},
+        )
+        item = await attachments.upload(
+            user_id=1,
+            collection_id=collection,
+            name="result.txt",
+            chunks=byte_chunks(b"original"),
+            source="tool",
+            delivery_scope="workspace:stable",
+        )
+        repeated = await attachments.upload(
+            user_id=1,
+            collection_id=collection,
+            name="result.txt",
+            chunks=byte_chunks(b"original"),
+            source="tool",
+            delivery_scope="workspace:stable",
+        )
+        assert item == repeated
+        assert await attachments.list_collection(
+            user_id=1, collection_id=collection
+        ) == [item]
+        identities.append(item.id)
+    assert len(set(identities)) == 2
 
 
 def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():

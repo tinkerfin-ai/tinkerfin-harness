@@ -85,20 +85,35 @@ JSON Pointer 引用、`properties`、`patternProperties`、`additionalProperties
 
 ## 附件输入
 
-通过 `.with_attachments(AttachmentSupport(...))` 配置模型的媒体输入与已保存附件的读取。
-`AttachmentSupport` 和 `AttachmentContent` 从 `tinkerfin.media` 导入。可选的异步
-`read_content(attachment)` 接收 `Attachment`，返回
-`AttachmentContent(data=文件字节, mime_type=内容类型)`；应用须校验当前访问权限，
-并在读取存储时限制大小。找不到文件时抛出 `FileNotFoundError`，其他读取错误与取消继续传播。
+绑定宿主提供的授权读取函数，框架在模型调用前选择附件：
 
-不提供 reader 时，保存的附件保持为可供文件工具读取的引用；消息内已有的媒体不需要 reader。
-框架按实际目标模型声明的图片、音频、视频和 PDF 能力决定是否发送媒体；可通过
-`supports_content(model, mime_type)` 收窄支持的格式。未知或不支持的媒体使用文字描述，
-不会修改原始消息，也不会自动解析文档、转录音频或抽取视频帧。
+```python
+from tinkerfin import TinkerFin
+from tinkerfin.media import AttachmentSupport
 
-每次模型调用默认最多读取最近的 5 个受支持附件（`max_attachments`），总计 20 MiB
-原始字节（`max_bytes`，不含 base64 编码开销）。超过总大小会在调用模型前抛出
-`ValueError`。编译后的子智能体和远程子智能体需自行配置附件访问。
+runtime = (
+    TinkerFin()
+    .with_namespace(user_namespace)
+    .with_attachments(AttachmentSupport(read_content=read_authorized_attachment))
+    .build(model=model, backend=workspace)
+)
+await runtime.ainvoke(
+    thread_id=thread_id, run_id=run_id,
+    input={"messages": [{"role": "user", "content": attachment_blocks}]},
+)
+```
+
+异步函数 `read_authorized_attachment(attachment)` 接收 `Attachment`，校验当前权限、
+有界读取并返回 `AttachmentContent(data=..., mime_type=...)`（从 `tinkerfin.media` 导入）。
+文件缺失时抛出 `FileNotFoundError`；其他错误和取消继续传播。
+
+默认优先选择最近的 5 个受支持附件（`max_attachments`），读取后纳入请求的原始字节不超过
+20 MiB（`max_bytes`，不含 base64 开销）。缺少 reader、格式不支持或超限时保留引用，
+正文需由文件工具读取。此预算不包括消息内已有的内联媒体，原件和历史保持不变。
+
+格式支持取决于目标模型声明的图片、音频、视频和 PDF 能力；可用
+`supports_content(model, mime_type)` 收窄范围。框架不负责文档解析或音视频转录。
+编译后的子智能体和远程子智能体需单独配置附件访问。
 
 ## 持久化与审批
 

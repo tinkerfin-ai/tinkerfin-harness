@@ -139,14 +139,20 @@ async def deliver_execution_file(
     thread_id: str = Query(min_length=1, max_length=128),
     run_id: str = Query(min_length=1, max_length=128),
     invocation_id: str = Query(min_length=1, max_length=512),
+    file_key: str = Query(pattern=r"^[0-9a-f]{64}$"),
 ) -> ApiResponse[Attachment]:
-    """把当前工具调用的本机产物保存为会话附件，重传不重复发布"""
+    """保存本次批量交付中的一个文件，稳定文件身份使重传不重复发布"""
     resources = get_resources(request.app)
     executions = DeviceExecutions(resources.database)
     authorized = await executions.authorize(
         token, execution_id, thread_id=thread_id, run_id=run_id
     )
     delivery = hashlib.sha256(
+        json.dumps(
+            [authorized.principal.device_id, file_key], separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    group = hashlib.sha256(
         json.dumps([execution_id, invocation_id], separators=(",", ":")).encode()
     ).hexdigest()
     attachment = await resources.attachments.upload(
@@ -164,7 +170,7 @@ async def deliver_execution_file(
             [attachment.id],
             user_id=authorized.principal.user_id,
             thread_id=thread_id,
-            message_id="local-file-" + delivery,
+            message_id="local-files-" + group,
         )
         await session.commit()
     return ApiResponse.success(attachment)

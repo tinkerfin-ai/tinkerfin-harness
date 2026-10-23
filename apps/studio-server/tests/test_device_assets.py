@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -11,16 +12,20 @@ from langgraph.store.memory import InMemoryStore
 from sqlalchemy import select
 
 from tinkerfin import TinkerFin
+from tinkerfin_contracts import RunIdentity
 from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.api.responses import ApiResponse
 from tinkerfin_studio.application import create_application
 from tinkerfin_studio.attachments.entity import AttachmentFile
 from tinkerfin_studio.attachments.service import byte_chunks
+from tinkerfin_studio.conversation.models import ConversationThread
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.devices.models import DeviceExecutionProfile
+from tinkerfin_studio.devices.profiles import DeviceProfiles
 from tinkerfin_studio.devices.schemas import LocalFileContent, LocalSkillPackage
 from tinkerfin_studio.skills.content import SkillContentStore
 from tinkerfin_studio.skills.packages import SkillFile, parse_package
+from tinkerfin_studio.skills.repository import SkillRepository
 from tinkerfin_studio.skills.schemas import SkillReference
 
 
@@ -67,6 +72,7 @@ async def device_assets(database, components_database, attachments):
             "thread_id": SOURCE.thread_id,
             "run_id": SOURCE.run_id,
             "invocation_id": "deliver-one",
+            "file_key": "a" * 64,
         },
     ) as client:
         yield client, execution, package
@@ -127,7 +133,9 @@ async def test_file_retransmission_returns_one_published_attachment_and_conflict
     result = ApiResponse[Attachment].model_validate_json(first.result().content).data
     assert result is not None
     repeated = await client.post(
-        path, params={"name": "report.md"}, content=b"# report"
+        path,
+        params={"name": "report.md", "invocation_id": "retry-call"},
+        content=b"# report",
     )
     assert repeated.status_code == 200
     assert repeated.json() == first.result().json()
@@ -138,7 +146,11 @@ async def test_file_retransmission_returns_one_published_attachment_and_conflict
     assert changed.status_code == 409
     another = await client.post(
         path,
-        params={"name": "report.md", "invocation_id": "deliver-two"},
+        params={
+            "name": "report.md",
+            "invocation_id": "deliver-two",
+            "file_key": "b" * 64,
+        },
         content=b"# updated",
     )
     assert another.status_code == 200 and another.json()["data"]["id"] != result.id
@@ -151,6 +163,100 @@ async def test_file_retransmission_returns_one_published_attachment_and_conflict
     output = ApiResponse[LocalFileContent].model_validate_json(read.content).data
     assert output is not None and base64.b64decode(output.content) == b"# report"
     assert len((await client.get(path)).json()["data"]) == 2
+
+
+async def test_one_invocation_delivers_eleven_files_and_retries_without_duplicate_publication(
+    device_assets, database
+):
+    client, execution, _ = device_assets
+    path = f"/api/devices/executions/{execution.binding.profile_id}/files"
+    contents = [
+        f'编号,说明\r\n00{i:03},"中文,记录"\r\n'.encode("utf-8-sig") for i in range(11)
+    ]
+    identities = []
+    for index, data in enumerate(contents):
+        response = await client.post(
+            path,
+            params={
+                "name": "report.csv",
+                "file_key": hashlib.sha256(str(index).encode()).hexdigest(),
+            },
+            content=data,
+        )
+        assert response.status_code == 200
+        identities.append(response.json()["data"]["id"])
+    assert len(set(identities)) == 11
+    for index, data in enumerate(contents):
+        repeated = await client.post(
+            path,
+            params={
+                "name": "report.csv",
+                "file_key": hashlib.sha256(str(index).encode()).hexdigest(),
+                "invocation_id": "receipt-recovery",
+            },
+            content=data,
+        )
+        assert (
+            repeated.status_code == 200
+            and repeated.json()["data"]["id"] == identities[index]
+        )
+        downloaded = await client.get(path + "/" + identities[index])
+        assert base64.b64decode(downloaded.json()["data"]["content"]) == data
+    async with database.session() as session:
+        rows = list(await session.scalars(select(AttachmentFile)))
+        assert len(rows) == 11 and len({row.message_id for row in rows}) == 1
+
+
+async def test_same_device_recovers_file_receipt_in_a_new_authorized_run(
+    device_assets, database
+):
+    client, execution, _ = device_assets
+    first = await client.post(
+        f"/api/devices/executions/{execution.binding.profile_id}/files",
+        params={"name": "report.txt"},
+        content=b"original",
+    )
+    assert first.status_code == 200
+    next_identity = RunIdentity(
+        namespace=SOURCE.namespace, thread_id=SOURCE.thread_id, run_id="next-run"
+    )
+    async with database.session() as session:
+        thread = await session.scalar(
+            select(ConversationThread).where(
+                ConversationThread.thread_id == SOURCE.thread_id
+            )
+        )
+        assert thread is not None
+        run = await ConversationRepository(session).create_run_registration(
+            thread_id=thread.id,
+            run_id=next_identity.run_id,
+            parent_run_id=SOURCE.run_id,
+            model_id="main",
+            input_json={},
+        )
+        await SkillRepository(session, 1).capture(
+            next_identity, project_id="project", selected_ids=()
+        )
+        binding = await DeviceProfiles(session, 1).capture(
+            identity=next_identity, project_id="project", access_mode="write_approval"
+        )
+        assert (
+            binding is not None and binding.profile_id != execution.binding.profile_id
+        )
+        run.status = "running"
+        await session.commit()
+    repeated = await client.post(
+        f"/api/devices/executions/{binding.profile_id}/files",
+        params={
+            "name": "report.txt",
+            "run_id": next_identity.run_id,
+            "invocation_id": "new-call",
+        },
+        content=b"original",
+    )
+    assert repeated.status_code == 200 and repeated.json() == first.json()
+    async with database.session() as session:
+        assert len(list(await session.scalars(select(AttachmentFile)))) == 1
 
 
 async def test_device_cannot_read_other_conversations_or_send_files_after_revocation(

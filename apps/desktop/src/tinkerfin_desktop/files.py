@@ -1,54 +1,165 @@
 """本机工作文件与来源会话附件之间的明确导入和交付"""
 
+import asyncio
+import hashlib
 import json
 from typing import Annotated
 
 import httpx
 from langchain_core.tools import BaseTool, ToolException, tool
-from pydantic import Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from tinkerfin_contracts import FilePath
+from tinkerfin_contracts.media import Attachment
 from tinkerfin_remote import ToolContextArg, WorkspaceRequest
 from tinkerfin_sandbox import LocalError, LocalSession
 
 from .cloud import CloudError, StudioClient
 
 
+class DeliveryFile(BaseModel):
+    """本次交付的本机原件与用户下载名称"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    file_path: Annotated[str, FilePath("read")] = Field(
+        min_length=1,
+        max_length=4096,
+        description="待交付本机文件路径，按当前工作区解析",
+    )
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="下载文件名，保留真实扩展名，不包含目录",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def download_name(cls, name: str) -> str:
+        if name in {".", ".."} or any(
+            c in {"/", "\\"} or ord(c) < 32 or ord(c) == 127 for c in name
+        ):
+            raise ValueError("下载文件名不能包含目录或控制字符")
+        return name
+
+
 def file_tools(cloud: StudioClient, request: WorkspaceRequest) -> tuple[BaseTool, ...]:
     """只绑定当前云端会话，目录和附件读取均由各自授权边界核验"""
 
+    capacity = asyncio.Semaphore(2)
+
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def deliver_file(
-        file_path: Annotated[
-            str, FilePath("read"), Field(min_length=1, max_length=4096)
-        ],
-        name: Annotated[str, Field(min_length=1, max_length=255)],
+    async def deliver_files(
+        files: Annotated[list[DeliveryFile], Field(min_length=1, max_length=100)],
         runtime: ToolContextArg[LocalSession],
     ) -> list[dict[str, JsonValue]]:
-        """把本机工作文件保存为原会话的附件。
+        """将本机文件批量交付为当前会话附件
+
+        保存当前原始字节，保留源文件；单项失败不撤销成功附件，只重试失败项。
+        同一来源、名称和内容重传时复用附件。
 
         Args:
-            file_path: 待交付本机文件的绝对路径、~/ 路径或相对项目目录的路径
-            name: 用户下载时使用的文件名及真实扩展名
+            files: 一至一百个文件及下载名，单文件也使用列表，原件非空且不超过 10 MiB
 
         Returns:
-            已持久保存的附件引用；仅返回引用后才可确认交付成功
+            按输入顺序的逐项交付结果及成功附件引用；只有成功项可以宣称已交付
 
         Raises:
-            ToolException: 文件不存在、超限、权限已撤销或云端未确认保存
+            ValueError: 文件参数或工作区路径无效
         """
-        try:
-            (downloaded,) = await runtime.workspace.adownload_files([file_path])
-            if downloaded.error is not None or downloaded.content is None:
-                raise ToolException("工作文件不存在或不可读取，尚未交付")
-            attachment = await cloud.deliver(
-                request, runtime.scope.invocation_id, name, downloaded.content
-            )
-            return [attachment.content_block()]
-        except (CloudError, httpx.RequestError, LocalError, ValueError) as error:
-            raise ToolException(
-                "文件尚未确认交付，请检查连接、文件内容和 10 MiB 大小限制"
-            ) from error
+        authorization_lost = False
+        selected = [
+            (item, runtime.workspace.to_shell_path(item.file_path)) for item in files
+        ]
+
+        async def deliver(
+            item: DeliveryFile,
+            canonical_path: str,
+        ) -> tuple[dict[str, JsonValue], Attachment | None]:
+            nonlocal authorization_lost
+            result: dict[str, JsonValue] = {
+                "file_path": item.file_path,
+                "name": item.name,
+            }
+            async with capacity:
+                if authorization_lost:
+                    return {
+                        **result,
+                        "status": "failed",
+                        "error": "设备授权已失效，文件未发送",
+                    }, None
+                try:
+                    (downloaded,) = await runtime.workspace.adownload_files(
+                        [item.file_path]
+                    )
+                    if downloaded.error is not None or downloaded.content is None:
+                        raise ValueError("工作文件不存在、不可读取或超过本机读取限制")
+                    content = downloaded.content
+                    if not content:
+                        raise ValueError("附件不能为空")
+                    if len(content) > 10 * 1024 * 1024:
+                        raise ValueError("单个附件不能超过 10 MiB")
+                    key = hashlib.sha256(
+                        json.dumps(
+                            [
+                                canonical_path,
+                                item.name,
+                                hashlib.sha256(content).hexdigest(),
+                            ],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ).encode()
+                    ).hexdigest()
+                    attachment = await cloud.deliver(
+                        request,
+                        runtime.scope.invocation_id,
+                        item.name,
+                        content,
+                        file_key=key,
+                    )
+                    return {
+                        **result,
+                        "status": "delivered",
+                        "attachment_id": attachment.id,
+                    }, attachment
+                except CloudError as error:
+                    unauthorized = error.status in {401, 403}
+                    authorization_lost = authorization_lost or unauthorized
+                    message = (
+                        "设备授权已失效，文件未发送"
+                        if unauthorized
+                        else error.detail or "服务尚未确认保存，可重试此文件"
+                    )
+                except httpx.RequestError:
+                    message = "连接中断，交付结果尚未确认；重试此文件不会重复发布"
+                except (LocalError, OSError):
+                    message = "工作文件不可读取，请检查本机文件权限"
+                except ValueError as error:
+                    message = str(error)
+                return {**result, "status": "failed", "error": message}, None
+
+        tasks: dict[
+            tuple[str, str],
+            asyncio.Task[tuple[dict[str, JsonValue], Attachment | None]],
+        ] = {}
+        async with asyncio.TaskGroup() as group:
+            for item, canonical_path in selected:
+                key = (canonical_path, item.name)
+                if key not in tasks:
+                    tasks[key] = group.create_task(deliver(item, canonical_path))
+        results: list[JsonValue] = []
+        attachments: dict[str, Attachment] = {}
+        for item, canonical_path in selected:
+            result, attachment = tasks[(canonical_path, item.name)].result()
+            results.append({**result, "file_path": item.file_path})
+            if attachment is not None:
+                attachments.setdefault(attachment.id, attachment)
+        return [
+            {
+                "type": "text",
+                "text": json.dumps({"results": results}, ensure_ascii=False),
+            },
+            *(attachment.content_block() for attachment in attachments.values()),
+        ]
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def import_attachment(
@@ -95,6 +206,6 @@ def file_tools(cloud: StudioClient, request: WorkspaceRequest) -> tuple[BaseTool
         except (CloudError, httpx.RequestError, LocalError, ValueError) as error:
             raise ToolException("附件尚未导入，请检查云端连接和目标目录权限") from error
 
-    for entry in (deliver_file, import_attachment):
+    for entry in (deliver_files, import_attachment):
         entry.handle_tool_error = True
-    return deliver_file, import_attachment
+    return deliver_files, import_attachment

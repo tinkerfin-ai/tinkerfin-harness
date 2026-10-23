@@ -1,5 +1,6 @@
 """技能完整性、稳定只读目录与本机二进制文件交付"""
 
+import asyncio
 import base64
 import json
 
@@ -205,16 +206,17 @@ async def test_file_tools_import_and_deliver_exact_binary_bytes(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         tools = file_tools(StudioClient(identity, client), request)
-        assert [entry.name for entry in tools] == ["deliver_file", "import_attachment"]
+        assert [entry.name for entry in tools] == ["deliver_files", "import_attachment"]
         for entry, mode in zip(tools, ("read", "write"), strict=True):
             schema_type = entry.tool_call_schema
             assert isinstance(schema_type, type) and issubclass(schema_type, BaseModel)
             schema = schema_type.model_json_schema()
             assert "runtime" not in schema["properties"]
             assert (
-                schema["properties"]["file_path"]["x-tinkerfin-file-path"]["operation"]
-                == mode
-            )
+                schema["$defs"]["DeliveryFile"]
+                if entry.name == "deliver_files"
+                else schema
+            )["properties"]["file_path"]["x-tinkerfin-file-path"]["operation"] == mode
         async with LocalWorkspace(
             project,
             sandbox_executable=native_sandbox,
@@ -240,13 +242,135 @@ async def test_file_tools_import_and_deliver_exact_binary_bytes(
                 ) as context:
                     result = await tools[0].ainvoke(
                         {
-                            "file_path": str(destination),
-                            "name": attachment.name,
+                            "files": [
+                                {"file_path": str(destination), "name": attachment.name}
+                            ],
                             "runtime": context,
                         }
                     )
-                    assert result == [attachment.content_block()]
+                    assert result[1:] == [attachment.content_block()]
+                    assert (
+                        json.loads(result[0]["text"])["results"][0]["status"]
+                        == "delivered"
+                    )
     assert destination.read_bytes() == content and delivered == [content]
+
+
+async def test_batch_delivery_preserves_each_file_and_recovers_receipts_across_calls(
+    tmp_path, native_sandbox
+):
+    identity = configuration(tmp_path)
+    request = execution_request(identity)
+    files = []
+    for index in range(11):
+        source = tmp_path / f"source-{index}.csv"
+        source.write_bytes(
+            f'编号,备注\r\n00{index},"中文\r\n记录"\r\n'.encode("utf-8-sig")
+        )
+        files.append({"file_path": str(source), "name": "report.csv"})
+    missing = {"file_path": str(tmp_path / "missing.csv"), "name": "missing.csv"}
+    received = {}
+
+    def respond(call):
+        key = call.url.params["file_key"]
+        if key in received:
+            assert received[key] == call.content
+        received[key] = call.content
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "message": "success",
+                "data": {
+                    "id": key,
+                    "name": "report.csv",
+                    "mime_type": "text/csv",
+                    "size_bytes": len(call.content),
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        tools = file_tools(StudioClient(identity, client), request)
+        async with LocalWorkspace(
+            tmp_path, sandbox_executable=native_sandbox
+        ) as workspace:
+            async with workspace.prepare(request.identity) as prepared:
+                for invocation in ("first", "retry"):
+                    with tool_context(
+                        prepared.workspace, request, invocation
+                    ) as context:
+                        result = await tools[0].ainvoke(
+                            {"files": [*files, missing, files[0]], "runtime": context}
+                        )
+                    items = json.loads(result[0]["text"])["results"]
+                    assert [item["status"] for item in items] == [
+                        *(["delivered"] * 11),
+                        "failed",
+                        "delivered",
+                    ]
+                    assert items[0]["attachment_id"] == items[-1]["attachment_id"]
+                    assert len(result) == 12 and len(received) == 11
+                source = tmp_path / "source-0.csv"
+                source.write_bytes(b"changed\n")
+                with tool_context(prepared.workspace, request, "changed") as context:
+                    changed = await tools[0].ainvoke(
+                        {"files": [files[0]], "runtime": context}
+                    )
+                assert (
+                    json.loads(changed[0]["text"])["results"][0]["attachment_id"]
+                    != items[0]["attachment_id"]
+                )
+                assert len(received) == 12
+
+
+async def test_batch_cancel_waits_for_inflight_requests_and_never_starts_queued_files(
+    tmp_path, native_sandbox
+):
+    identity = configuration(tmp_path)
+    request = execution_request(identity)
+    files = []
+    for index in range(5):
+        path = tmp_path / f"{index}.txt"
+        path.write_bytes(b"text")
+        files.append({"file_path": str(path), "name": path.name})
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+    calls = []
+
+    async def respond(call):
+        nonlocal active
+        calls.append(call.url.params["name"])
+        active += 1
+        if active == 2:
+            entered.set()
+        try:
+            await release.wait()
+            raise AssertionError("取消请求不能完成交付")
+        finally:
+            active -= 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        tools = file_tools(StudioClient(identity, client), request)
+        async with LocalWorkspace(
+            tmp_path, sandbox_executable=native_sandbox
+        ) as workspace:
+            async with workspace.prepare(request.identity) as prepared:
+                with tool_context(prepared.workspace, request, "cancel") as context:
+                    task = asyncio.create_task(
+                        tools[0].ainvoke({"files": files, "runtime": context})
+                    )
+                    try:
+                        await entered.wait()
+                        task.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await task
+                        assert active == 0 and len(calls) == 2
+                    finally:
+                        task.cancel()
+                        release.set()
+                        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_cancelled_skill_publish_finishes_owned_cleanup_before_reopen(

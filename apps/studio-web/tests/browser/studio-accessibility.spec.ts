@@ -2209,38 +2209,36 @@ test('展开的 Plan 澄清与草稿在四个视口保持可滚动且处于视�
   }
 })
 
-test('Tool 审批按独立卡片顺序接管输入区且不暴露折叠或拖拽入口', async ({ page }) => {
+test('Tool 审批完整展示，可用键盘逐项选择后提交整组', async ({ page }) => {
   await mockStudio(page, { approval: true })
   const card = page.getByRole('region', { name: '等待审批' })
   await expect(card).toContainText('/first-approval.txt')
-  await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
-
-  await card.getByRole('button', { name: '允许' }).click()
   await expect(card).toContainText('/second-approval.txt')
-  const reject = card.getByRole('button', { name: '拒绝' })
-  await expect(reject).toBeFocused()
-  await reject.click()
-  const reason = card.getByRole('textbox', { name: '拒绝原因（可选）' })
-  await expect(reason).toBeFocused()
-  await card.getByRole('button', { name: '取消', exact: true }).click()
-  await expect(reject).toBeFocused()
-
-  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const first = card.getByRole('group', { name: '审批项 1' }).getByRole('button', { name: '允许' })
+  await first.focus()
+  await first.press('Enter')
+  await expect(first).toHaveAttribute('aria-pressed', 'true')
+  await expect(first).toBeFocused()
+  const reject = card.getByRole('group', { name: '审批项 2' }).getByRole('button', { name: '拒绝' })
+  await reject.focus()
+  await reject.press('Space')
+  await expect(reject).toHaveAttribute('aria-pressed', 'true')
+  await expect(card.getByRole('button', { name: '提交决定' })).toBeEnabled()
+  await page.emulateMedia({ reducedMotion: 'reduce', forcedColors: 'active' })
   await expect(card).toBeVisible()
-  await page.emulateMedia({ forcedColors: 'active' })
   await expect(card.locator('.approval-status-dot')).toBeVisible()
 })
 
 test('重新打开待审批会话后仍可直接完成审批', async ({ page }) => {
   await mockStudio(page, { approval: true })
   const card = page.getByRole('region', { name: '等待审批' })
-  await expect(card.getByRole('button', { name: '允许' })).toBeVisible()
+  await expect(card.getByRole('button', { name: '全部允许' })).toBeVisible()
   await expect(card.getByRole('button', { name: /展开审批卡片|收起审批卡片/ })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
 
   await page.reload()
   await expect(card).toBeVisible()
-  await expect(card.getByRole('button', { name: '允许' })).toBeVisible()
+  await expect(card.getByRole('button', { name: '全部允许' })).toBeVisible()
   await expect(card.getByRole('button', { name: /展开审批卡片|收起审批卡片/ })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
 })
@@ -3687,7 +3685,7 @@ test.describe('touch/coarse pointer', () => {
     }
   })
 
-  test('触控环境中的 HITL 保持内容驱动紧凑高度且没有拖拽入口', async ({ page }) => {
+  test('触控审批展开完整列表，收起后保持紧凑且没有拖拽入口', async ({ page }) => {
     await mockStudio(page, { approval: true })
     expect(await page.evaluate(() => matchMedia('(any-pointer: coarse)').matches)).toBe(true)
 
@@ -3697,8 +3695,20 @@ test.describe('touch/coarse pointer', () => {
     await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
     const bounds = await card.boundingBox()
     if (!bounds) throw new Error('触控审批卡片几何不可用')
-    expect(bounds.height).toBeGreaterThanOrEqual(94)
-    expect(bounds.height).toBeLessThan(260)
+    expect(bounds.y).toBeGreaterThanOrEqual(0)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+    await expect(card.getByRole('group', { name: '审批项 1' })).toBeVisible()
+    await expect(card.getByRole('group', { name: '审批项 2' })).toBeVisible()
+    for (const action of await card.getByRole('button').all()) {
+      const target = await action.boundingBox()
+      expect(target!.width).toBeGreaterThanOrEqual(44)
+      expect(target!.height).toBeGreaterThanOrEqual(44)
+    }
+    await card.getByText('已选择 0/2 项', { exact: true }).click()
+    await expect(card.getByRole('group', { name: '审批项 1' })).toBeHidden()
+    const collapsed = (await card.boundingBox())!
+    expect(collapsed.height).toBeGreaterThanOrEqual(94)
+    expect(collapsed.height).toBeLessThan(260)
   })
 
   test('共享日期选择器在触控与浅深主题下保持可用尺寸和视口边界', async ({ page }) => {
@@ -3971,7 +3981,7 @@ for (const { approval, touch } of [{ approval: false, touch: false }, { approval
 test('审批确认按钮在浅深主题与四尺寸保持中性色实心和统一圆角', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await mockStudio(page, { approval: true })
-  const allow = page.getByRole('region', { name: '等待审批' }).getByRole('button', { name: '允许', exact: true })
+  const allow = page.getByRole('region', { name: '等待审批' }).getByRole('button', { name: '全部允许', exact: true })
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => { document.documentElement.dataset.theme = value }, theme)
     for (const width of [320, 768, 1024, 1440]) {
@@ -4198,4 +4208,70 @@ test('Plan 首次提交未保存后保留拒绝原因，新提交成功收束到
   await expect(history).toBeVisible()
   await history.locator('summary').click()
   await expect(history.getByRole('region').getByText(reason, { exact: true })).toBeVisible()
+})
+
+test('批量交付保留部分失败，文本预览和原件下载覆盖主题与四尺寸', async ({ page }, testInfo) => {
+  const csv = '\uFEFF编号,说明,金额\r\n00123,"中文,引号和\r\n换行",0.10\r\n'
+  const text = Array.from({ length: 201 }, (_, index) => '完整数据第 ' + index + ' 行').join('\n')
+  const html = '<script>window.previewExecuted = true</script><h1>仅源码</h1>'
+  const files = [
+    { id: 'business-csv', name: '门店导出.csv', mime_type: 'text/csv', size_bytes: Buffer.byteLength(csv) },
+    { id: 'business-text', name: '原始记录.txt', mime_type: 'text/plain', size_bytes: Buffer.byteLength(text) },
+    { id: 'business-html', name: '页面源码.html', mime_type: 'text/html', size_bytes: Buffer.byteLength(html) },
+  ]
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await mockStudio(page, {
+    expectedMessageText: '文件处理完成',
+    conversationMessages: [
+      { id: 'business-request', role: 'user', content: '请交付处理后的文件', createdAt: BASE_TIME },
+      { id: 'business-delivery', role: 'tool', content: 'deliver_files', createdAt: BASE_TIME, attachments: files,
+        meta: { toolName: 'deliver_files', toolCallId: 'business-delivery', status: 'completed',
+          params: JSON.stringify({ files: files.map(file => ({ file_path: '/' + file.name, name: file.name })) }),
+          result: JSON.stringify({ results: [
+            ...files.map(file => ({ file_path: '/' + file.name, name: file.name, status: 'delivered', attachment_id: file.id })),
+            { file_path: '/missing.txt', name: '遗漏资料.txt', status: 'failed', error: '原文件不存在' },
+          ] }),
+        } },
+      { id: 'business-done', role: 'assistant', content: '文件处理完成', createdAt: BASE_TIME },
+    ],
+  })
+  await page.route('**/api/attachments/*/download-url*', async route => {
+    const id = new URL(route.request().url()).pathname.split('/')[3]
+    await route.fulfill({ json: { code: 0, message: 'success', data: { url: new URL('/objects/' + id, route.request().url()).href, expires_in: 300 } } })
+  })
+  await page.route('**/objects/business-*', async route => {
+    const id = new URL(route.request().url()).pathname.split('/').at(-1)
+    await route.fulfill({ body: id === 'business-csv' ? csv : id === 'business-text' ? text : html, contentType: 'application/octet-stream' })
+  })
+  await expect(page.getByText('已交付 3 个文件 · 1 项失败', { exact: true })).toBeVisible()
+  await expect(page.getByRole('list', { name: '未交付的文件' })).toContainText('原文件不存在')
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 960 })
+      const opener = page.getByRole('button', { name: '预览文档：原始记录.txt' })
+      await opener.click()
+      const dialog = page.getByRole('dialog', { name: '原始记录.txt', exact: true })
+      await expect(dialog.getByText('仅预览前 200 文本行或 10 万字符，下载可查看完整文件')).toBeVisible()
+      await expect(dialog.locator('pre')).toContainText('完整数据第 199 行')
+      await expect(dialog.locator('pre')).not.toContainText('完整数据第 200 行')
+      expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath('business-text-' + theme + '-' + width + '.png') })
+      await page.keyboard.press('Escape')
+      await expect(opener).toBeFocused()
+    }
+  }
+  await page.getByRole('button', { name: '预览文档：页面源码.html' }).click()
+  const htmlDialog = page.getByRole('dialog', { name: '页面源码.html', exact: true })
+  await expect(htmlDialog.locator('pre')).toHaveText(html)
+  await expect(htmlDialog.locator('script, iframe')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '预览文档：门店导出.csv', exact: true }).click()
+  const csvDialog = page.getByRole('dialog', { name: '门店导出.csv', exact: true })
+  await expect(csvDialog.locator('pre')).toContainText('00123')
+  const received = page.waitForEvent('download')
+  await csvDialog.getByRole('button', { name: '下载附件：门店导出.csv', exact: true }).click()
+  const download = await received
+  const { readFile } = await import('node:fs/promises')
+  expect(await readFile((await download.path())!)).toEqual(Buffer.from(csv))
 })

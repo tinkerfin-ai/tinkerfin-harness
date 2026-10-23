@@ -103,7 +103,7 @@ async def test_configuration_is_bound_to_device_namespace_and_execution(tmp_path
         ExecutionConfiguration.model_validate({**selected, "model": {}})
 
 
-async def test_assets_use_original_bytes_and_stable_invocation_identity(tmp_path):
+async def test_assets_use_original_bytes_and_stable_file_identity(tmp_path):
     identity = configuration(tmp_path)
     request = execution_request(identity)
     content = b"%PDF-1.4\n\xff\x00\xe2\xe3\xcf\xd3\n"
@@ -125,6 +125,7 @@ async def test_assets_use_original_bytes_and_stable_invocation_identity(tmp_path
         if call.method == "POST":
             assert call.content == content
             assert call.url.params["invocation_id"] == "a" * 64
+            assert call.url.params["file_key"] == "b" * 64
             assert call.url.params["name"] == attachment.name
             data = attachment.model_dump(mode="json")
         elif call.url.path.endswith("/" + attachment.id):
@@ -142,11 +143,15 @@ async def test_assets_use_original_bytes_and_stable_invocation_identity(tmp_path
         assert await cloud.attachments(request) == [attachment]
         assert await cloud.read(request, attachment) == content
         assert (
-            await cloud.deliver(request, "a" * 64, attachment.name, content)
+            await cloud.deliver(
+                request, "a" * 64, attachment.name, content, file_key="b" * 64
+            )
             == attachment
         )
         with pytest.raises(ValueError):
-            await cloud.deliver(request, "a" * 64, attachment.name, b"")
+            await cloud.deliver(
+                request, "a" * 64, attachment.name, b"", file_key="b" * 64
+            )
     assert len(observed) == 3
 
 

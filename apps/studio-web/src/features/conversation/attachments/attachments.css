@@ -431,6 +431,30 @@
     background: var(--color-layer-1);
     box-shadow: var(--shadow-2);
   }
+  .attachment-delivery-failures {
+    display: grid;
+    gap: var(--space-3);
+    margin: var(--space-2) 0 var(--space-4);
+    padding: 0;
+    list-style: none;
+    font-size: var(--type-meta-size);
+  }
+  .attachment-delivery-failures li { display: flex; align-items: start; gap: var(--space-2); }
+  .attachment-delivery-failures svg, .delivery-warning { flex: none; color: var(--color-warning-text); }
+  .attachment-delivery-failures li > span { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+  .attachment-delivery-failures strong { font-weight: var(--weight-ui); }
+  .attachment-delivery-failures li > span > span { color: var(--color-text-secondary); }
+  .attachment-document-page--text { max-width: none; }
+  .attachment-text-source {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--color-text-primary);
+    font-family: var(--font-code);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-body-line);
+    tab-size: 4;
+  }
   .attachment-document-page--sheet {
     width: min(100%, var(--layout-document-width));
   }

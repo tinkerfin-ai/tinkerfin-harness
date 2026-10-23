@@ -164,8 +164,12 @@ async def test_cloud_approval_survives_companion_restart_without_local_model(
                 tool_calls=[
                     {
                         "id": "deliver",
-                        "name": "deliver_file",
-                        "args": {"file_path": str(output), "name": attachment.name},
+                        "name": "deliver_files",
+                        "args": {
+                            "files": [
+                                {"file_path": str(output), "name": attachment.name}
+                            ]
+                        },
                     }
                 ],
             ),

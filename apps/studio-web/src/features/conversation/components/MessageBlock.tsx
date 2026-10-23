@@ -1,5 +1,6 @@
 import { PlanHistoryCard } from './PlanHistoryCard'
 import { AttachmentList } from '../attachments/AttachmentList'
+import { readDeliveryResults } from '../attachments/deliveryResult'
 import {
   Bot,
   Check,
@@ -20,6 +21,7 @@ import { ToolCallRow } from './ToolCallRow'
 import { ContextMessage } from './ContextMessage'
 import { useCopyFeedback } from './copyFeedback'
 import { useI18n } from '../../../i18n'
+import { isTranslationKey } from '../../../i18n/messages'
 import { useStreamingContentScroll } from './useStreamingContentScroll'
 
 type MessageStatus = NonNullable<Message['meta']>['status']
@@ -392,6 +394,8 @@ export const MessageBlock = memo(
 export function ToolCallCard({ message, className }: { message: Message; className?: string }) {
   const [open, setOpen] = useState(false)
   const { t } = useI18n()
+  const delivery = readDeliveryResults(message)
+  const failures = delivery?.filter(item => item.status === 'failed') ?? []
   const isTodoUpdate = message.meta?.toolName === 'write_todos'
   const todoStatus = message.meta?.status === 'failed'
     ? t('任务清单更新失败')
@@ -405,8 +409,14 @@ export function ToolCallCard({ message, className }: { message: Message; classNa
     <ToolCallRow message={message} open={open} onOpenChange={setOpen} className={`tool-card${className ? ` ${className}` : ''}`}>
       {isTodoUpdate
         ? <div className="todo-trace-tool-status">{todoStatus}</div>
-        : hasToolDetails(message) ? <ToolDetails message={message} visible={open} /> : null}
+        : !delivery && hasToolDetails(message) ? <ToolDetails message={message} visible={open} /> : null}
     </ToolCallRow>
+    {failures.length > 0 && <ul className="attachment-delivery-failures" aria-label={t('未交付的文件')}>
+      {failures.map((item, index) => <li key={`${item.file_path}:${index}`}>
+        <TriangleAlert size={16} aria-hidden="true" />
+        <span><strong>{item.name}</strong><span>{isTranslationKey(item.error) ? t(item.error) : item.error}</span></span>
+      </li>)}
+    </ul>}
     <AttachmentList attachments={message.attachments} />
     </>
   )

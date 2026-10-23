@@ -94,26 +94,39 @@ argument to the workspace root; the input schema must also allow that input form
 
 ## Attachment inputs
 
-Configure model media inputs and stored attachment reads with
-`.with_attachments(AttachmentSupport(...))`. Import `AttachmentSupport` and
-`AttachmentContent` from `tinkerfin.media`. The optional async
-`read_content(attachment)` receives an `Attachment` and returns
-`AttachmentContent(data=..., mime_type=...)`. The host must authorize each read
-and bound its size at the storage boundary. Raise `FileNotFoundError` for missing
-files; other read errors and cancellation propagate.
+Bind a host-authorized reader to let the runtime select attachments before model calls:
 
-Without a reader, stored attachments remain references for file-reading tools.
-Native media already present in messages does not need a reader. The actual
-destination model's declared image, audio, video, and PDF capabilities determine
-which media is sent; `supports_content(model, mime_type)` can restrict supported
-formats. Unknown or unsupported media becomes a text description without changing
-original messages. This does not parse documents, transcribe audio, or extract
-video frames.
+```python
+from tinkerfin import TinkerFin
+from tinkerfin.media import AttachmentSupport
 
-Each model call reads at most 5 recent supported attachments (`max_attachments`)
-and 20 MiB of total raw content (`max_bytes`, before base64 encoding) by default.
-Exceeding the byte limit raises `ValueError` before invoking the model. Compiled
-and remote subagents configure their own attachment access.
+runtime = (
+    TinkerFin()
+    .with_namespace(user_namespace)
+    .with_attachments(AttachmentSupport(read_content=read_authorized_attachment))
+    .build(model=model, backend=workspace)
+)
+await runtime.ainvoke(
+    thread_id=thread_id, run_id=run_id,
+    input={"messages": [{"role": "user", "content": attachment_blocks}]},
+)
+```
+
+The async `read_authorized_attachment(attachment)` receives an `Attachment`, checks
+current access, bounds storage reads, and returns `AttachmentContent(data=..., mime_type=...)`
+from `tinkerfin.media`. Raise `FileNotFoundError` for missing files; other errors and
+cancellation propagate.
+
+By default, the runtime prioritizes the 5 most recent supported attachments
+(`max_attachments`) and includes at most 20 MiB of resolved raw bytes (`max_bytes`,
+before base64 encoding). Files without a reader, unsupported formats, and files over
+budget remain references for file-reading tools. Inline media is outside this budget;
+original files and history stay unchanged.
+
+Supported formats follow the destination model's declared image, audio, video, and
+PDF capabilities; use `supports_content(model, mime_type)` to restrict them. Document
+parsing and audio/video transcription belong to file tools. Compiled and remote
+subagents configure attachment access separately.
 
 ## Persistence and approval
 
