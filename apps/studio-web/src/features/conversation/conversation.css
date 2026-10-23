@@ -1221,8 +1221,8 @@
   .plan-review-composer-heading h2 { display: flex; min-width: 0; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--type-ui-size); font-weight: var(--weight-ui); line-height: var(--type-title-line); }
   .plan-question-composer-heading h2 > svg { flex: 0 0 auto; color: var(--color-plan-panel-accent); }
   .plan-review-composer-heading h2 > svg { flex: 0 0 auto; color: var(--color-warning-panel-accent); }
-  .approval-composer-heading h2 > span:not(.approval-status-dot),
   .plan-review-composer-heading h2 > span { color: var(--color-warning-panel-accent); }
+  .approval-composer-heading h2 > span:not(.approval-status-dot) { color: var(--color-text-primary); }
   .plan-review-composer-heading h2 > span { flex: 1 1 auto; }
   .plan-question-composer-heading h2 > span { color: var(--color-plan-panel-accent); }
   .approval-composer-heading h2 > span:not(.approval-status-dot),
@@ -1283,6 +1283,25 @@
     overscroll-behavior: contain;
   }
 
+  .approval-batch { min-width: 0; }
+  .approval-batch > summary {
+    padding: var(--space-2);
+    color: var(--color-text-secondary);
+    font-size: var(--type-meta-size);
+    cursor: pointer;
+    border-radius: var(--radius-lg);
+  }
+  .approval-batch > summary:hover { background: var(--color-hover); }
+  .approval-batch > summary:active { background: var(--color-active); }
+  .approval-batch > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .approval-batch-list { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+  .approval-batch-list > li { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-2); min-width: 0; }
+  .approval-batch-list .approval-tool-card { flex: 1 1 calc(var(--space-16) * 3); min-width: 0; }
+  .approval-item-actions { display: flex; gap: var(--space-1); margin-inline-start: auto; }
+  @media (pointer: coarse) {
+    .approval-batch > summary { min-height: 44px; }
+  }
+
   .approval-composer-detail {
     margin: 0 10px;
     color: var(--color-text-secondary);
@@ -1296,6 +1315,8 @@
 
   .approval-tool-card:hover,
   .approval-tool-card:focus-within { background: var(--color-hover); }
+
+  .approval-tool-card .conversation-detail-summary { color: var(--color-text-secondary); }
 
   .approval-rejection-form,
   .plan-review-rejection-form {

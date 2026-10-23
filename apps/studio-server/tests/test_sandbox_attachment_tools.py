@@ -2,7 +2,7 @@
 
 import asyncio
 import io
-from types import SimpleNamespace
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,10 +14,14 @@ from deepagents.backends.protocol import (
 from PIL import Image
 
 from tinkerfin.tools import ToolRuntime
+from tinkerfin_contracts.media import Attachment
 from tinkerfin_sandbox import OpenSandboxFileTooLargeError, RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.service import AttachmentService
-from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachment_tools
+from tinkerfin_studio.attachments.workspace_tools import (
+    build_sandbox_attachment_tools,
+    save_work_file,
+)
 
 
 @pytest.fixture
@@ -33,11 +37,15 @@ def attachment_tools():
     )
     sandbox.aexecute = AsyncMock(return_value=ExecuteResponse(output="", exit_code=0))
     sandbox.adelete = AsyncMock(side_effect=lambda path: DeleteResult(path=path))
-    sandbox.to_shell_path.side_effect = lambda path: path.lstrip("/")
+    sandbox.to_shell_path.side_effect = RootedOpenSandboxBackend(
+        MagicMock()
+    ).to_shell_path
     service = MagicMock(spec=AttachmentService)
     service.documents = DocumentProcessor()
     service.upload = AsyncMock(
-        return_value=SimpleNamespace(content_block=lambda: {"type": "file", "id": "a"})
+        return_value=Attachment(
+            id="a", name="r.png", mime_type="image/png", size_bytes=8
+        )
     )
 
     class WorkspaceRuntime(ToolRuntime[None, RootedOpenSandboxBackend]):
@@ -59,14 +67,103 @@ def attachment_tools():
     return sandbox, service, {tool.name: tool for tool in tools}, runtime
 
 
-async def test_deliver_file_does_not_upload_overflow(attachment_tools) -> None:
+@pytest.mark.parametrize(
+    "name,data",
+    [
+        ("记录.txt", "原始内容".encode("gb18030")),
+        ("broken.json", b'{"x":'),
+        ("README", b"binary\x00\xff"),
+    ],
+)
+async def test_general_attachment_import_keeps_bytes_without_preview_or_execution(
+    attachment_tools, name, data
+):
+    sandbox, service, _, _ = attachment_tools
+    service.documents.run = AsyncMock()
+    saved = await save_work_file(sandbox, service.documents, name=name, data=data)
+    assert saved.name == name and saved.size_bytes == len(data)
+    assert saved.preview_file_path is None
+    sandbox.aupload_files.assert_awaited_once_with([(saved.file_path, data)])
+    sandbox.aexecute.assert_not_awaited()
+    service.documents.run.assert_not_awaited()
+
+
+async def test_deliver_files_does_not_upload_overflow(attachment_tools) -> None:
     sandbox, service, tools, runtime = attachment_tools
     sandbox.aread_bytes.side_effect = OpenSandboxFileTooLargeError("too large")
-    with pytest.raises(OpenSandboxFileTooLargeError):
-        await tools["deliver_file"].ainvoke(
-            {"runtime": runtime, "file_path": "/report.pdf", "name": "r.pdf"}
-        )
+    result = await tools["deliver_files"].ainvoke(
+        {"runtime": runtime, "files": [{"file_path": "/report.pdf", "name": "r.pdf"}]}
+    )
+    assert json.loads(result[0]["text"])["results"] == [
+        {
+            "file_path": "/report.pdf",
+            "name": "r.pdf",
+            "status": "failed",
+            "error": "单个附件不能超过 10 MiB",
+        }
+    ]
     service.upload.assert_not_awaited()
+
+
+async def test_batch_delivery_retains_success_and_reports_missing_files(
+    attachment_tools,
+):
+    sandbox, service, tools, runtime = attachment_tools
+
+    async def read(path, **kwargs):
+        if path == "/missing.csv":
+            raise FileNotFoundError(path)
+        return b"id\n00123\n"
+
+    sandbox.aread_bytes.side_effect = read
+    result = await tools["deliver_files"].ainvoke(
+        {
+            "runtime": runtime,
+            "files": [
+                {"file_path": "report.csv", "name": "report.csv"},
+                {"file_path": "/missing.csv", "name": "missing.csv"},
+                {"file_path": "/report.csv", "name": "report.csv"},
+            ],
+        }
+    )
+    results = json.loads(result[0]["text"])["results"]
+    assert [item["status"] for item in results] == ["delivered", "failed", "delivered"]
+    assert "不存在" in results[1]["error"]
+    assert len(result) == 2
+    service.upload.assert_awaited_once()
+
+
+async def test_batch_validates_every_path_before_any_upload(attachment_tools):
+    sandbox, service, tools, runtime = attachment_tools
+    with pytest.raises(ValueError, match="safe virtual path"):
+        await tools["deliver_files"].ainvoke(
+            {
+                "runtime": runtime,
+                "files": [
+                    {"file_path": "/ok.csv", "name": "ok.csv"},
+                    {"file_path": "/../secret.csv", "name": "secret.csv"},
+                ],
+            }
+        )
+    sandbox.aread_bytes.assert_not_awaited()
+    service.upload.assert_not_awaited()
+
+
+async def test_batch_storage_failure_is_not_reported_as_missing_source(
+    attachment_tools,
+):
+    _, service, tools, runtime = attachment_tools
+    service.upload.side_effect = OSError("storage unavailable")
+    result = await tools["deliver_files"].ainvoke(
+        {
+            "runtime": runtime,
+            "files": [
+                {"file_path": "/report.csv", "name": "report.csv"},
+            ],
+        }
+    )
+    item = json.loads(result[0]["text"])["results"][0]
+    assert item["status"] == "failed" and "存储" in item["error"]
 
 
 async def test_workspace_path_rejection_is_not_bypassed(attachment_tools):

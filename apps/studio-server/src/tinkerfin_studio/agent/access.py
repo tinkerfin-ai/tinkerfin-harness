@@ -24,7 +24,6 @@ def local_review_policy(access_mode: AccessMode) -> dict[str, bool | InterruptOn
             "edit_file",
             "delete",
             "import_attachment",
-            "deliver_file",
             "open_url",
             "call_mcp_tool",
             "desktop_press",

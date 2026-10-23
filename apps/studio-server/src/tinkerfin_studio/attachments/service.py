@@ -31,9 +31,10 @@ from tinkerfin_studio.attachments.entity import (
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
     MAX_TOTAL_BYTES,
-    MIME_TYPES,
+    FileValidationError,
     image_variant,
     validate_file,
+    validate_name,
 )
 from tinkerfin_studio.attachments.storage import (
     AttachmentStorage,
@@ -126,9 +127,11 @@ class AttachmentService:
         if thread_id is not None and collection_id is not None:
             raise ValueError("附件只能属于会话或集合中的一种范围")
         if delivery_scope is not None and (
-            thread_id is None or not delivery_scope or len(delivery_scope) > 128
+            (thread_id is None and collection_id is None)
+            or not delivery_scope
+            or len(delivery_scope) > 128
         ):
-            raise ValueError("幂等文件交付需要已绑定会话和有界范围标识")
+            raise ValueError("幂等文件交付需要绑定会话或执行集合，并提供有界范围标识")
         async with self._uploads:
             self._validate_name(name)
             content = bytearray()
@@ -145,6 +148,10 @@ class AttachmentService:
                 mime = await to_thread.run_sync(
                     validate_file, name, data, limiter=self._processing
                 )
+            except FileValidationError as error:
+                raise BusinessException(
+                    AttachmentErrorCode.INVALID_FILE, message=str(error)
+                ) from error
             except (ValueError, OSError, Warning) as error:
                 raise BusinessException(AttachmentErrorCode.INVALID_FILE) from error
             digest = hashlib.sha256(data).hexdigest()
@@ -155,7 +162,7 @@ class AttachmentService:
                     NAMESPACE_URL,
                     "studio-file:"
                     + json.dumps(
-                        [user_id, thread_id, delivery_scope],
+                        [user_id, thread_id, collection_id, delivery_scope],
                         separators=(",", ":"),
                     ),
                 ).hex
@@ -219,13 +226,12 @@ class AttachmentService:
 
     @staticmethod
     def _validate_name(name: str) -> None:
-        if (
-            not name
-            or len(name) > 255
-            or any(c in name for c in ("/", "\\", "\0", "\r", "\n"))
-            or name.rsplit(".", 1)[-1].lower() not in MIME_TYPES
-        ):
-            raise BusinessException(AttachmentErrorCode.INVALID_FILE)
+        try:
+            validate_name(name)
+        except FileValidationError as error:
+            raise BusinessException(
+                AttachmentErrorCode.INVALID_FILE, message=str(error)
+            ) from error
 
     async def request_upload(
         self, *, user_id: int, project_id: str, name: str, size_bytes: int
@@ -288,6 +294,10 @@ class AttachmentService:
                     mime = await to_thread.run_sync(
                         validate_file, row.name, data, limiter=self._processing
                     )
+                except FileValidationError as error:
+                    raise BusinessException(
+                        AttachmentErrorCode.INVALID_FILE, message=str(error)
+                    ) from error
                 except (ValueError, OSError, Warning) as error:
                     raise BusinessException(AttachmentErrorCode.INVALID_FILE) from error
                 return await self._publish(row, data, mime)

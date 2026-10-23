@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import shlex
 import struct
@@ -15,16 +16,23 @@ from uuid import uuid4
 import anyio
 from deepagents.backends.protocol import FileUploadResponse
 from deepagents.backends.sandbox import MAX_BINARY_BYTES
-from langchain_core.tools import BaseTool, ToolException, tool
-from pydantic import Field, JsonValue
+from langchain_core.tools import BaseTool, tool
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from tinkerfin.tools import ToolRuntime
-from tinkerfin_sandbox import RootedOpenSandboxBackend
+from tinkerfin_contracts.media import Attachment
+from tinkerfin_sandbox import (
+    OpenSandboxError,
+    OpenSandboxFileTooLargeError,
+    RootedOpenSandboxBackend,
+)
+from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
     MAX_PIXELS,
-    MIME_TYPES,
+    file_mime,
+    validate_name,
 )
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
 
@@ -100,6 +108,26 @@ class WorkFileStorage(Protocol):
     ) -> list[FileUploadResponse]: ...
 
 
+class DeliveryFile(BaseModel):
+    """工作区原件及其下载名称，归属由工具绑定的会话或执行集合决定"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    file_path: str = Field(
+        min_length=1, max_length=4096, description="当前工作区中待交付文件的路径"
+    )
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="下载文件名，保留真实扩展名，不包含目录",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def download_name(cls, name: str) -> str:
+        validate_name(name)
+        return name
+
+
 @dataclass(frozen=True, slots=True)
 class WorkFile:
     """当前用户工作区中的文件，交付时复制该路径当时的内容
@@ -143,7 +171,7 @@ async def describe_work_file(
         processor: 应用拥有的有界文档处理器
         path: 已保存原文件的工作区路径
         shell_path: 同一文件在当前工作区命令中使用的路径
-        name: 原文件显示名称，支持图片、Markdown、PDF、DOCX、XLSX、PPTX 和技能 ZIP
+        name: 原文件显示名称，保留用户提供的扩展名
         data: 原文件内容
 
     Returns:
@@ -155,7 +183,7 @@ async def describe_work_file(
         OpenSandboxError: 工作区不可用或传输失败
         TimeoutError: 预览生成超时
     """
-    mime = MIME_TYPES[name.rsplit(".", 1)[-1].lower()]
+    mime = file_mime(name)
     preview_path = None
     if mime.startswith("image/") and len(data) > MAX_BINARY_BYTES:
         result = await processor.run(
@@ -204,7 +232,7 @@ async def save_work_file(
     Args:
         workspace: 当前用户工作区
         processor: 应用拥有的有界文档处理器
-        name: 文件名称，不包含目录，扩展名必须是支持的文件格式
+        name: 文件名称，不包含目录或控制字符
         data: 非空且不超过单文件限制的原始内容
 
     Returns:
@@ -216,17 +244,11 @@ async def save_work_file(
         OpenSandboxError: 工作区不可用或传输失败
         TimeoutError: 图片预览生成超时
     """
-    extension = name.rsplit(".", 1)[-1].lower()
-    if (
-        not name
-        or len(name) > 255
-        or any(char in name for char in ("/", "\\", "\0", "\r", "\n"))
-        or extension not in MIME_TYPES
-    ):
-        raise ValueError("文件名须为不含目录的受支持格式名称")
+    validate_name(name)
+    suffix = "." + name.rsplit(".", 1)[-1] if "." in name else ""
     if not data or len(data) > MAX_FILE_BYTES:
         raise ValueError("工作文件不能为空，且单个不能超过 10 MiB")
-    path = f"artifact-{uuid4().hex}.{extension}"
+    path = f"artifact-{uuid4().hex}{suffix}"
     results = await workspace.aupload_files([(path, data)])
     if len(results) != 1 or results[0].path != path or results[0].error is not None:
         raise OSError("工作文件保存失败")
@@ -289,49 +311,122 @@ def build_sandbox_attachment_tools(
     if (thread_id is None) == (collection_id is None):
         raise ValueError("文件工具必须绑定一个会话或自动化附件集合")
 
-    async def save_file(
-        sandbox: RootedOpenSandboxBackend, path: str, name: str
-    ) -> list[dict[str, JsonValue]]:
-        # 框架负责工作区路径校验、有界读取和取消时的资源释放
-        try:
-            data = await sandbox.aread_bytes(path, max_bytes=MAX_FILE_BYTES)
-        except FileNotFoundError as error:
-            raise ToolException(
-                "工作文件不存在，未交付附件。请使用生成工具返回的 file_path，或先查找实际文件"
-            ) from error
-        file = await service.upload(
-            user_id=user_id,
-            name=name,
-            chunks=byte_chunks(data),
-            thread_id=thread_id,
-            collection_id=collection_id,
-            source="tool",
-        )
-        return [file.content_block()]
+    capacity = asyncio.Semaphore(2)
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def deliver_file(
-        file_path: str, name: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+    async def deliver_files(
+        files: Annotated[list[DeliveryFile], Field(min_length=1, max_length=100)],
+        runtime: ToolRuntime[None, RootedOpenSandboxBackend],
     ) -> list[dict[str, JsonValue]]:
-        """把用户工作区中的文件保存为会话附件
+        """将选定的工作文件一次交付为独立附件
 
-        仅在决定向用户交付时调用。复制文件当前内容，原工作文件继续保留；
-        后续编辑不会改变已交付附件，附件保存成功后才返回可展示的引用。
+        保存当前内容，原工作文件继续保留，后续编辑不改变已交付附件。
+        单项失败不撤销成功项；只重试失败文件，同一原件重传不重复发布。
 
         Args:
-            file_path: 用户工作区内的图片、Markdown、PDF、DOCX、XLSX、PPTX 或技能 ZIP 路径
-            name: 下载文件名，扩展名须与内容一致
+            files: 一至一百个工作文件及下载名，单文件也使用列表，原件非空且不超过 10 MiB
 
         Returns:
-            已保存的附件引用；源文件不存在时返回工具失败结果，不创建附件
+            按输入顺序的逐项交付结果及成功附件引用；只有成功项可以宣称已交付
 
         Raises:
-            BusinessException: 会话不可用或文件不符合附件要求
-            ValueError: 文件路径或参数无效
-            OpenSandboxError: 工作区读取失败或文件超过大小限制
-            OSError: 文件不可读或不是普通文件
+            ValueError: 文件参数不符合工具要求
         """
-        return await save_file(runtime.workspace, file_path, name)
+        authorization_lost = False
+        selected = [
+            (item, runtime.workspace.to_shell_path(item.file_path)) for item in files
+        ]
+
+        async def deliver(
+            item: DeliveryFile,
+            canonical_path: str,
+        ) -> tuple[dict[str, JsonValue], Attachment | None]:
+            nonlocal authorization_lost
+            result: dict[str, JsonValue] = {
+                "file_path": item.file_path,
+                "name": item.name,
+            }
+            async with capacity:
+                if authorization_lost:
+                    return {
+                        **result,
+                        "status": "failed",
+                        "error": "附件归属不可用，文件未发布",
+                    }, None
+
+                def failed(message: str) -> tuple[dict[str, JsonValue], None]:
+                    return {**result, "status": "failed", "error": message}, None
+
+                try:
+                    data = await runtime.workspace.aread_bytes(
+                        item.file_path, max_bytes=MAX_FILE_BYTES
+                    )
+                except FileNotFoundError:
+                    return failed("工作文件不存在，请核对实际路径")
+                except OpenSandboxFileTooLargeError:
+                    return failed("单个附件不能超过 10 MiB")
+                except PermissionError:
+                    return failed("没有读取此工作文件的权限")
+                except OpenSandboxError:
+                    return failed("工作区连接不可用，文件尚未确认交付")
+                except OSError:
+                    return failed("工作文件不可读取")
+                except ValueError as error:
+                    return failed(str(error))
+                key = hashlib.sha256(
+                    json.dumps(
+                        [canonical_path, item.name, hashlib.sha256(data).hexdigest()],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                try:
+                    attachment = await service.upload(
+                        user_id=user_id,
+                        name=item.name,
+                        chunks=byte_chunks(data),
+                        thread_id=thread_id,
+                        collection_id=collection_id,
+                        source="tool",
+                        delivery_scope="workspace:" + key,
+                    )
+                except BusinessException as error:
+                    authorization_lost = (
+                        authorization_lost
+                        or error.error_code.http_status in {401, 403, 404}
+                    )
+                    return failed(str(error))
+                except OSError:
+                    return failed("附件存储暂不可用，交付结果尚未确认；可重试此文件")
+                return {
+                    **result,
+                    "status": "delivered",
+                    "attachment_id": attachment.id,
+                }, attachment
+
+        tasks: dict[
+            tuple[str, str],
+            asyncio.Task[tuple[dict[str, JsonValue], Attachment | None]],
+        ] = {}
+        async with asyncio.TaskGroup() as group:
+            for item, canonical_path in selected:
+                key = (canonical_path, item.name)
+                if key not in tasks:
+                    tasks[key] = group.create_task(deliver(item, canonical_path))
+        results: list[JsonValue] = []
+        attachments: dict[str, Attachment] = {}
+        for item, canonical_path in selected:
+            result, attachment = tasks[(canonical_path, item.name)].result()
+            results.append({**result, "file_path": item.file_path})
+            if attachment is not None:
+                attachments.setdefault(attachment.id, attachment)
+        return [
+            {
+                "type": "text",
+                "text": json.dumps({"results": results}, ensure_ascii=False),
+            },
+            *(attachment.content_block() for attachment in attachments.values()),
+        ]
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def capture_browser(
@@ -345,7 +440,7 @@ def build_sandbox_attachment_tools(
         """将网页或工作区 HTML 渲染为 PNG，不自动交付
 
         如有 preview_file_path，可先读取预览；也可使用工作区工具处理原图。
-        决定交给用户时再调用 deliver_file；截图始终作为独立工作文件保留。
+        决定交给用户时再调用 deliver_files；截图始终作为独立工作文件保留。
         运行取消或连接失败时不报告成功，工作区可能保留已生成的产物。
 
         Args:
@@ -451,5 +546,5 @@ def build_sandbox_attachment_tools(
         )
         return saved.tool_result()
 
-    deliver_file.handle_tool_error = True
-    return [deliver_file, capture_browser]
+    deliver_files.handle_tool_error = True
+    return [deliver_files, capture_browser]

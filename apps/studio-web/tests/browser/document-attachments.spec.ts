@@ -36,7 +36,7 @@ const documentHistory = {
   messages: source.messages.map(message => message.role === 'tool'
     ? {
         ...message,
-        name: 'deliver_file',
+        name: 'deliver_files',
         content: [imageAttachment, ...attachments].map(attachment => ({
           type: 'file',
           extras: { attachment },

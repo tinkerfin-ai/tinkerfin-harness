@@ -37,11 +37,14 @@ class StudioResponse(BaseModel, Generic[Value]):
 
 
 class CloudError(Exception):
-    """云端拒绝或传输失败，只保留安全状态码供原生界面分类"""
+    """云端拒绝或传输失败，保留状态码和安全错误说明"""
 
-    def __init__(self, status: int, code: int | None = None) -> None:
+    def __init__(
+        self, status: int, code: int | None = None, *, detail: str | None = None
+    ) -> None:
         self.status = status
         self.code = code
+        self.detail = detail
         super().__init__(f"Studio request failed: status={status}, code={code}")
 
 
@@ -125,13 +128,19 @@ class StudioClient:
                 "Accept-Encoding": "identity",
             },
         ) as response:
-            if response.status_code != 200:
-                raise CloudError(response.status_code)
             body = bytearray()
             async for chunk in response.aiter_bytes():
                 if len(body) + len(chunk) > limit:
                     raise CloudError(502)
                 body.extend(chunk)
+            if response.status_code != 200:
+                try:
+                    failure = StudioResponse[JsonValue].model_validate_json(body)
+                except ValueError:
+                    raise CloudError(response.status_code) from None
+                raise CloudError(
+                    response.status_code, failure.code, detail=failure.message[:2000]
+                )
             return bytes(body)
 
     async def _decode(
@@ -193,8 +202,10 @@ class StudioClient:
         invocation_id: str,
         name: str,
         content: bytes,
+        *,
+        file_key: str,
     ) -> Attachment:
-        """保存文件并返回云端收据，稳定调用身份用于确认重复交付"""
+        """保存文件并返回云端收据，稳定文件身份允许跨调用重传"""
         if not content or len(content) > 10 * 1024 * 1024:
             raise ValueError("交付文件必须非空且不超过 10 MiB")
         return await self._decode(
@@ -205,6 +216,7 @@ class StudioClient:
                 params={
                     **self._identity_params(request),
                     "invocation_id": invocation_id,
+                    "file_key": file_key,
                     "name": name,
                 },
                 content=content,

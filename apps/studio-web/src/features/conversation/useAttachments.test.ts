@@ -10,18 +10,18 @@ vi.mock('./attachments/client', () => ({
 }))
 
 describe('attachment uploads', () => {
-  it('rejects unsupported files and oversized images without uploading', () => {
+  it('拒绝空文件和超大文件并说明具体原因', () => {
     vi.mocked(uploadAttachment).mockClear()
     const onError = vi.fn()
     const { result } = renderHook(() => useAttachments('project-1', onError))
     act(() =>
       result.current.addFiles([
-        new File(['x'], 'macro.exe'),
+        new File([], 'empty.txt'),
         new File([new Uint8Array(10 * 1024 ** 2 + 1)], 'big.png'),
       ]),
     )
     expect(result.current.attachments).toEqual([])
-    expect(onError).toHaveBeenCalledExactlyOnceWith('最多 5 个附件，单个 10 MiB，合计 25 MiB')
+    expect(onError).toHaveBeenCalledExactlyOnceWith('单个附件不能超过 10 MiB')
     expect(uploadAttachment).not.toHaveBeenCalled()
   })
   it('does not put an old deletion error into a new conversation draft', async () => {
@@ -82,4 +82,15 @@ it('引用交付物只修改目标会话草稿，保留当前草稿并复用去�
   expect(result.current.attachments).toEqual(store.get('thread:target'))
   expect(result.current.attachments[0]).toMatchObject({ attachment: file, kind: 'document', reference: true })
   expect(store.get('thread:current')).toEqual(current)
+})
+
+it('通用文本、损坏 JSON、HTML、普通 ZIP 和未知格式都使用原文件上传', async () => {
+  vi.mocked(uploadAttachment).mockReset().mockImplementation(async (_project, file) => ({
+    id: file.name, name: file.name, mime_type: 'application/octet-stream', size_bytes: file.size,
+  }))
+  const files = ['sales.csv', 'broken.json', 'page.html', 'materials.zip', 'archive.bin'].map(name => new File(['original bytes'], name))
+  const { result } = renderHook(() => useAttachments('project-1'))
+  act(() => result.current.addFiles(files))
+  await waitFor(() => expect(result.current.attachments.every(item => item.state === 'ready')).toBe(true))
+  expect(vi.mocked(uploadAttachment).mock.calls.map(call => call[1])).toEqual(files)
 })

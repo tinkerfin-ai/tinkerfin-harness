@@ -85,7 +85,7 @@ export function ApprovalCard({
   onChange: (updater: (approval: ApprovalState) => ApprovalState) => void
   onSubmit: (
     interruptIds: readonly string[],
-    finalDecision?: ApprovalSubmissionDecision,
+    decisions?: readonly ApprovalSubmissionDecision[],
   ) => void
   submission?: InteractionSubmissionState
 }) {
@@ -133,6 +133,7 @@ export function ApprovalCard({
   if (!approval || approval.items.length === 0) return null
   if (!active) return null
   const interruptIds = approval.items.map((item) => item.interruptId)
+  const isBatch = approval.items.length > 1
   const description = descriptionParts(active.description, t('请确认本次操作'))
   const canApprove = active.allowedDecisions.includes('approve')
   const canReject = active.allowedDecisions.includes('reject')
@@ -141,18 +142,21 @@ export function ApprovalCard({
     ?? active.rejectionReason
     ?? ''
   const rejectionFormId = `approval-rejection-${active.id}`
-  const toolMessage: Message = {
-    id: `approval-tool-${active.interruptId}`,
+  const toolMessage = (item: typeof active): Message => ({
+    id: 'approval-tool-' + item.interruptId,
     role: 'tool',
-    content: active.toolName,
+    content: item.toolName,
     createdAt: conversation.updatedAt,
     meta: {
-      toolName: active.toolName,
-      params: active.params,
-      status: 'paused',
-      toolCallId: active.toolCallId,
-      interruptId: active.interruptId,
+      toolName: item.toolName, params: item.params, status: 'paused',
+      toolCallId: item.toolCallId, interruptId: item.interruptId,
     },
+  })
+  const submitAll = (decision: ApprovalDecision) => {
+    if (approval.submitted) return
+    const allowed = decision === 'approved' ? 'approve' : 'reject'
+    if (!approval.items.every(item => item.allowedDecisions.includes(allowed))) return
+    onSubmit(interruptIds, approval.items.map(item => ({ interruptId: item.interruptId, decision })))
   }
 
   const updateApproval = (updater: (current: ApprovalState) => ApprovalState) => {
@@ -166,9 +170,9 @@ export function ApprovalCard({
     const completesGroup = approval.items.every((item) => (
       Boolean(item.decision) || item.interruptId === decision.interruptId
     ))
-    if (completesGroup) {
+    if (completesGroup && approval.items.length === 1) {
       // 最后一项由提交所有者合并到权威会话，避免先 setState 再读取造成遗漏
-      onSubmit(interruptIds, decision)
+      onSubmit(interruptIds, [decision])
       return
     }
     updateApproval((current) => decideItem(current, decision))
@@ -214,19 +218,34 @@ export function ApprovalCard({
         <div className="approval-composer-heading">
           <h2>
             <span className="approval-status-dot" aria-hidden="true" />
-            <span className="plan-interaction-card-title">{description.title}</span>
+            <span className="plan-interaction-card-title">{isBatch ? t('{count} 项操作待审批', { count: approval.items.length }) : description.title}</span>
           </h2>
         </div>
       </header>
       <InteractionCardColorBridge tone="warning" />
 
       <div ref={bodyRef} className="approval-composer-body ui-scrollbar">
-        {description.detail && (
-          <div className="approval-composer-detail">
+        {isBatch ? <details className="approval-batch" open>
+          <summary>{t('已选择 {done}/{total} 项', { done: approval.items.filter(item => item.decision).length, total: approval.items.length })}</summary>
+          <ol className="approval-batch-list">
+            {approval.items.map((item, index) => <li key={item.interruptId}>
+              <ToolCallCard message={toolMessage(item)} className="approval-tool-card" />
+              <div className="approval-item-actions" role="group" aria-label={t('审批项 {index}', { index: index + 1 })}>
+                {item.allowedDecisions.includes('reject') && <Button type="button" size="sm" variant={item.decision === 'rejected' ? 'danger' : 'ghost'}
+                  disabled={approval.submitted} aria-pressed={item.decision === 'rejected'}
+                  onClick={() => recordDecision({ interruptId: item.interruptId, decision: 'rejected' })}>{t('拒绝')}</Button>}
+                {item.allowedDecisions.includes('approve') && <Button type="button" size="sm" variant={item.decision === 'approved' ? 'solid' : 'ghost'}
+                  disabled={approval.submitted} aria-pressed={item.decision === 'approved'}
+                  onClick={() => recordDecision({ interruptId: item.interruptId, decision: 'approved' })}>{t('允许')}</Button>}
+              </div>
+            </li>)}
+          </ol>
+        </details> : <>
+          {description.detail && <div className="approval-composer-detail">
             <MarkdownContent content={description.detail} variant="compact" />
-          </div>
-        )}
-        <ToolCallCard message={toolMessage} className="approval-tool-card" />
+          </div>}
+          <ToolCallCard message={toolMessage(active)} className="approval-tool-card" />
+        </>}
         {approval.mode === 'reject' && (
           <form
             id={rejectionFormId}
@@ -263,15 +282,25 @@ export function ApprovalCard({
           {approval.submitted ? t(submission?.failed ? '暂时无法确认提交结果' : '正在提交') : approval.error ?? ''}
         </p>
         <div className="approval-composer-actions">
-          {approval.submitted ? submission?.failed && <Button type="button" size="sm" variant="text" loading={submission.checking} onClick={submission.retry}>{t('重新检查状态')}</Button> : approval.mode === 'reject' ? (
+          {approval.submitted ? submission?.failed && <Button type="button" size="sm" variant="text" loading={submission.checking} onClick={submission.retry}>{t('重新检查状态')}</Button> : isBatch ? <>
+            {allDecided ? <Button type="button" size="sm" shape="capsule" variant="solid" onClick={() => onSubmit(interruptIds)}>
+              {t(approval.error ? '重新提交' : '提交决定')}
+            </Button> : <>
+              {approval.items.every(item => item.allowedDecisions.includes('reject')) && <Button type="button" size="sm" shape="capsule"
+                className="approval-reject-button" onClick={() => submitAll('rejected')}>{t('全部拒绝')}</Button>}
+              {approval.items.every(item => item.allowedDecisions.includes('approve')) && <Button type="button" size="sm" shape="capsule"
+                variant="solid" onClick={() => submitAll('approved')}>{t('全部允许')}</Button>}
+            </>}
+          </> : approval.mode === 'reject' ? (
             <>
-              <Button size="sm" shape="capsule" disabled={approval.submitted} onClick={cancelRejection}>{t('取消')}</Button>
-              <Button size="sm" shape="capsule" disabled={approval.submitted} type="submit" form={rejectionFormId} variant="danger">
+              <Button type="button" size="sm" shape="capsule" disabled={approval.submitted} onClick={cancelRejection}>{t('取消')}</Button>
+              <Button type="submit" size="sm" shape="capsule" disabled={approval.submitted} form={rejectionFormId} variant="danger">
                 {t('确认拒绝')}
               </Button>
             </>
           ) : allDecided ? (
             <Button
+              type="button"
               ref={retryButtonRef}
               disabled={approval.submitted}
               size="sm"
@@ -285,6 +314,7 @@ export function ApprovalCard({
             <>
               {canReject && (
                 <Button
+                  type="button"
                   ref={rejectButtonRef}
                   disabled={approval.submitted}
                   size="sm"
@@ -297,6 +327,7 @@ export function ApprovalCard({
               )}
               {canApprove && (
                 <Button
+                  type="button"
                   ref={approveButtonRef}
                   disabled={approval.submitted}
                   size="sm"

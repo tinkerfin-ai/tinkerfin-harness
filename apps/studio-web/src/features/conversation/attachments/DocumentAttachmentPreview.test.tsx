@@ -84,3 +84,36 @@ describe('文档预览', () => {
   })
 
 })
+
+it.each([
+  ['text/csv', '数据.csv', '编号,说明\n00123,"中文,引号"'],
+  ['application/json', '损坏.json', '{"incomplete":'],
+  ['text/html', '页面.html', '<script>alert(1)</script><h1>源码</h1>'],
+  ['text/x-python', '程序.py', 'print("中文")'],
+  ['text/plain', '记录.txt', '中文记录'],
+])('按源码预览 %s，接受 UTF-8 BOM 并且不执行内容', async (mime, name, source) => {
+  vi.mocked(attachmentBlob).mockResolvedValue(new Blob(['\uFEFF' + source]))
+  const { dialog } = await openDocument(document(mime, name))
+  await within(dialog).findByText((_, node) => node?.tagName === 'PRE' && node.textContent === source)
+  expect(dialog.querySelector('pre')?.textContent).toBe(source)
+  expect(dialog.querySelector('script, iframe')).toBeNull()
+  expect(URL.createObjectURL).not.toHaveBeenCalled()
+})
+
+it('长文本明确标出预览范围，原件仍可下载', async () => {
+  const source = Array.from({ length: 201 }, (_, i) => '记录' + i).join('\n')
+  vi.mocked(attachmentBlob).mockResolvedValue(new Blob([source]))
+  const { dialog } = await openDocument(document('text/plain', '记录.txt'))
+  expect(await within(dialog).findByText('仅预览前 200 文本行或 10 万字符，下载可查看完整文件')).toBeVisible()
+  expect(dialog.querySelector('pre')?.textContent).toContain('记录199')
+  expect(dialog.querySelector('pre')?.textContent).not.toContain('记录200')
+  expect(within(dialog).getByRole('button', { name: '下载附件：记录.txt' })).toBeEnabled()
+})
+
+it('编码不匹配时显示读取限制，不吞掉或替换原文', async () => {
+  vi.mocked(attachmentBlob).mockResolvedValue(new Blob([new Uint8Array([0xd6, 0xd0, 0xce, 0xc4])]))
+  const { dialog } = await openDocument(document('text/plain', '记录.txt'))
+  expect(await within(dialog).findByText('无法按 UTF-8 读取，请下载原文件并指定编码或转换为 UTF-8')).toBeVisible()
+  expect(dialog.querySelector('pre')).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: '重试预览' })).not.toBeInTheDocument()
+})

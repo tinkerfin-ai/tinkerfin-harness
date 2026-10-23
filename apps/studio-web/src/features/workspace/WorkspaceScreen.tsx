@@ -134,31 +134,20 @@ const matchesApprovalGroup = (
   ),
 )
 
-const withFinalApprovalDecision = (
+const withApprovalDecisions = (
   approval: ApprovalState,
-  finalDecision?: ApprovalSubmissionDecision,
-) => {
-  if (!finalDecision) return approval
-  const activeIndex = approval.items.findIndex(
-    (item) => item.interruptId === finalDecision.interruptId,
-  )
-  if (activeIndex < 0) return approval
-  return {
-    ...approval,
-    activeIndex,
-    mode: 'options' as const,
-    error: undefined,
-    items: approval.items.map((item, index) => index === activeIndex
-      ? {
-          ...item,
-          decision: finalDecision.decision,
-          rejectionReason: finalDecision.decision === 'rejected'
-            ? finalDecision.rejectionReason
-            : undefined,
-        }
-      : item),
-  }
-}
+  decisions: readonly ApprovalSubmissionDecision[] = [],
+) => ({
+  ...approval,
+  mode: 'options' as const,
+  error: undefined,
+  items: approval.items.map(item => {
+    const decision = decisions.find(value => value.interruptId === item.interruptId)
+    if (!decision || !item.allowedDecisions.includes(decision.decision === 'approved' ? 'approve' : 'reject')) return item
+    return { ...item, decision: decision.decision,
+      rejectionReason: decision.decision === 'rejected' ? decision.rejectionReason : undefined }
+  }),
+})
 
 type WorkspaceScreenProps = { user: AuthUser; onLogout: () => void; onToast: ToastHandler }
 
@@ -892,7 +881,7 @@ function ProjectWorkspaceScreen({
 
   const submitApproval = useCallback((
     expectedInterruptIds: readonly string[],
-    finalDecision?: ApprovalSubmissionDecision,
+    decisions?: readonly ApprovalSubmissionDecision[],
   ) => {
     const authoritativeConversation = latestWorkspace.current.conversations.find(
       (item) => item.threadId === conversation.threadId,
@@ -912,9 +901,9 @@ function ProjectWorkspaceScreen({
       }))
       return
     }
-    const completedApproval = withFinalApprovalDecision(
+    const completedApproval = withApprovalDecisions(
       authoritativeConversation.approval,
-      finalDecision,
+      decisions,
     )
     const completedConversation = {
       ...authoritativeConversation,

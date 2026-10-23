@@ -157,9 +157,14 @@ async def test_chat_zip_preview_install_and_replace_share_the_skill_service(
         await skill_library.preview_attachment(1, "another-thread", uploaded.id)
 
 
-async def test_zip_direct_upload_and_invalid_packages_use_the_same_validation(
-    attachments: AttachmentService, attachment_storage
+async def test_zip_upload_preserves_originals_and_skill_import_validates_packages(
+    attachments: AttachmentService, attachment_storage, skill_library, session
 ):
+    await add_users(session)
+    await ConversationRepository(session).create_thread(
+        project_id="project-1", user_id=1, thread_id="chat", title="资料", model_id=None
+    )
+    await session.commit()
     data = archive_bytes(skill_files())
     attachment_id, _ = await attachments.request_upload(
         project_id="project-1", user_id=1, name="reports.zip", size_bytes=len(data)
@@ -168,18 +173,25 @@ async def test_zip_direct_upload_and_invalid_packages_use_the_same_validation(
     file = await attachments.complete_upload(attachment_id, user_id=1)
     assert file.mime_type == "application/zip"
     assert (await attachments.read(file.id, user_id=1))[1] == data
+    stored = {file.id}
     for malformed in [
         b"not zip",
         archive_bytes((SkillFile("notes.txt", b"text"),)),
         archive_bytes((*skill_files(), SkillFile("../outside", b"x"))),
     ]:
+        uploaded = await attachments.upload(
+            project_id="project-1",
+            user_id=1,
+            thread_id="chat",
+            name="materials.zip",
+            chunks=byte_chunks(malformed),
+        )
+        stored.add(uploaded.id)
+        assert (await attachments.read(uploaded.id, user_id=1, thread_id="chat"))[
+            1
+        ] == malformed
         with pytest.raises(BusinessException) as failed:
-            await attachments.upload(
-                project_id="project-1",
-                user_id=1,
-                name="invalid.zip",
-                chunks=byte_chunks(malformed),
-            )
+            await skill_library.preview_attachment(1, "chat", uploaded.id)
         assert failed.value.error_code == SkillErrorCode.INVALID_PACKAGE
     with pytest.raises(BusinessException) as oversized:
         await attachments.request_upload(
@@ -189,7 +201,7 @@ async def test_zip_direct_upload_and_invalid_packages_use_the_same_validation(
             size_bytes=MAX_FILE_BYTES + 1,
         )
     assert oversized.value.error_code.http_status == 413
-    assert set(attachment_storage.objects) == {file.id}
+    assert set(attachment_storage.objects) == stored
 
 
 async def test_zip_is_a_model_reference_and_never_sent_as_binary(

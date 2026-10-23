@@ -383,13 +383,13 @@ describe('历史恢复与实时续流联合验证', () => {
     for (const event of [
       { type: 'RUN_STARTED', threadId: snapshot.threadId, runId: 'run-resume' },
       { type: 'TOOL_CALL_RESULT', toolCallId: 'public-call-write', messageId: 'public-result', role: 'tool', content: 'written' },
-      { type: 'TOOL_CALL_START', toolCallId: 'public-deliver', toolCallName: 'deliver_file' },
+      { type: 'TOOL_CALL_START', toolCallId: 'public-deliver', toolCallName: 'deliver_files' },
       { type: 'RUN_ERROR', message: '交付失败', code: 'tool_error' },
     ] as ConversationAgUiEvent[]) conversation = applyConversationEvent(conversation, event)
     const tools = conversation.messages.filter(message => message.role === 'tool')
     expect(tools).toHaveLength(2)
     expect(tools[0]).toMatchObject({ id: 'tool-node', content: 'write_file', meta: { status: 'completed', result: 'written', toolCallId: 'public-call-write' } })
-    expect(tools[1]).toMatchObject({ content: 'deliver_file', meta: { status: 'failed' } })
+    expect(tools[1]).toMatchObject({ content: 'deliver_files', meta: { status: 'failed' } })
     expect(conversation.runStatus).toBe('error')
     expect(snapshot.graph.nodes[0]?.sourceId).toBe('call-write')
   })

@@ -36,13 +36,7 @@ export const buildConversationDisplayEntries = (
     const turns = new Set(nodes.filter(node => node.runId === origin).map(node => node.turnId))
     for (const node of nodes) if (turns.has(node.turnId)) groupedRuns.add(node.runId)
   }
-  const pendingApproval = conversation.approval?.submitted === false
-    ? conversation.approval
-    : undefined
-  const activeApprovalIndex = pendingApproval
-    ? Math.max(0, Math.min(pendingApproval.activeIndex, pendingApproval.items.length - 1))
-    : -1
-  const activeApprovalToolCallId = pendingApproval?.items[activeApprovalIndex]?.toolCallId
+  const pendingApproval = conversation.approval
   const approvalToolCallIds = new Set(
     pendingApproval?.items.flatMap((item) => item.toolCallId ? [item.toolCallId] : []) ?? [],
   )
@@ -53,10 +47,6 @@ export const buildConversationDisplayEntries = (
     if (message.role === 'user') turnRunId = message.meta?.runId
     if (message.role !== 'tool') return { type: 'message', message }
     if (message.meta?.sourceAgentName) return null
-    if (
-      activeApprovalToolCallId
-      && message.meta?.toolCallId === activeApprovalToolCallId
-    ) return { type: 'message', message }
     if (
       message.meta?.toolCallId
       && approvalToolCallIds.has(message.meta.toolCallId)

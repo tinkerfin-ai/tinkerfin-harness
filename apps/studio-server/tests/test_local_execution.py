@@ -14,6 +14,7 @@ from test_automation_integration import automation_resources as automation_resou
 from test_tool_policy import Model, collect, proposal
 
 from tinkerfin import AgUiResumeRequest, SkillSource
+from tinkerfin_contracts import ToolDescriptor, ToolResult, WorkspaceTool
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.agent.runtime import build_conversation_runtime
 from tinkerfin_studio.devices.profiles import DeviceProfileBinding, DeviceProfiles
@@ -126,6 +127,77 @@ async def test_cloud_runtime_uses_named_computer_tools_and_local_review(
     assert ("task" in names) is delegate
     assert workspace.opened == workspace.closed
     assert len(model.requests) == (6 if delegate else 4)
+
+
+async def test_authorized_file_delivery_does_not_interrupt_write_approval_mode(
+    automation_resources, monkeypatch, tmp_path
+):
+    calls = []
+
+    async def deliver(arguments):
+        calls.append(arguments)
+        return ToolResult(value={"delivered": True})
+
+    class DeliveryWorkspace(_Workspace):
+        @asynccontextmanager
+        async def prepare(self, identity):
+            async with super().prepare(identity) as prepared:
+                yield replace(
+                    prepared,
+                    tools=(
+                        WorkspaceTool(
+                            ToolDescriptor(
+                                name="deliver_files",
+                                description="Deliver selected files",
+                                input_schema={"type": "object", "properties": {}},
+                            ),
+                            deliver,
+                        ),
+                    ),
+                )
+
+    workspace = DeliveryWorkspace(
+        backend=FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+    )
+    resources = automation_resources
+    monkeypatch.setattr(
+        resources,
+        "remote_tools",
+        SimpleNamespace(
+            endpoint=lambda **kwargs: SimpleNamespace(
+                workspace=lambda **kwargs: workspace
+            )
+        ),
+        raising=False,
+    )
+    model = Model(
+        responses=[
+            proposal(10, name="computer_tools"),
+            proposal(1, name="computer_deliver_files"),
+            AIMessage(content="已交付"),
+        ]
+    )
+    monkeypatch.setattr(
+        runtime_module, "create_chat_model", lambda *args, **kwargs: model
+    )
+    async with resources.database.session() as session:
+        model_config = await AgentModelService(
+            AgentModelRepository(session, user_id=1)
+        ).resolve("main")
+    runtime = build_conversation_runtime(
+        resources=resources,
+        user_id=1,
+        thread_id="delivery",
+        project_id="project-1",
+        model_config=model_config,
+        search_service=None,
+        image_service=None,
+        access_mode="write_approval",
+    )
+    events, error = await collect(runtime, thread_id="delivery")
+    assert error is None and calls == [{}]
+    assert not isinstance(events[-1].outcome, RunFinishedInterruptOutcome)
+    assert workspace.opened == workspace.closed
 
 
 async def test_computer_discovery_exposes_authorized_skill_sources_to_subagent(

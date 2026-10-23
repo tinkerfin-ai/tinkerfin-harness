@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useCallback, useEffect, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -495,9 +495,10 @@ describe('Studio Trace history integration', () => {
     expect(screen.queryByRole('button', { name: '允许' })).not.toBeInTheDocument()
     await act(async () => { releaseHistory() })
 
-    await user.click(screen.getByRole('button', { name: '允许' }))
+    await user.click(within(screen.getByRole('group', { name: '审批项 1' })).getByRole('button', { name: '允许' }))
     await waitFor(() => expect(screen.getAllByText('/b.txt').length).toBeGreaterThan(0))
-    await user.click(screen.getByRole('button', { name: '允许' }))
+    await user.click(within(screen.getByRole('group', { name: '审批项 2' })).getByRole('button', { name: '允许' }))
+    await user.click(screen.getByRole('button', { name: '提交决定' }))
     await waitFor(() => expect(chatPayloads).toHaveLength(1))
     await waitFor(() => expect(screen.getByRole('textbox', { name: '消息输入' })).toBeEnabled())
     expect(screen.queryByRole('region', { name: '等待审批' })).not.toBeInTheDocument()
