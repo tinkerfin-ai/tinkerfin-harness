@@ -14,7 +14,7 @@ const english: Record<string, string> = {
   '正在启动': 'Starting', '连接失败': 'Connection failed', '连接已中断': 'Connection interrupted',
   '请检查网络后重新连接': 'Check your network and reconnect', '请检查服务地址后重试': 'Check the service address and try again',
   '重新连接': 'Reconnect', '重新授权': 'Authorize again', '授权已失效，请重新连接': 'Authorization expired. Connect again',
-  '项目目录': 'Project folders', '暂无项目': 'No projects', '刷新': 'Refresh', '在 Finder 中打开': 'Open in Finder',
+  '项目目录': 'Project folders', '暂无项目': 'No projects', '刷新': 'Refresh', '在 Finder 中打开': 'Open in Finder', '向下查看更多项目': 'Scroll to more projects',
   '辅助功能': 'Accessibility', '屏幕录制': 'Screen recording', '读取控件、点击与输入': 'Read controls, click and type',
   '截取应用窗口': 'Capture app windows', '已开启': 'Enabled', '前往开启': 'Enable in Settings',
   '账号': 'Account', '设备名称': 'Device name', '编辑设备名称': 'Edit device name', '保存设备名称': 'Save device name',
