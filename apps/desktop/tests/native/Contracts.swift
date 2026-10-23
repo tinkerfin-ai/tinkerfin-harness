@@ -15,6 +15,7 @@ struct WebsiteCase: Decodable {
 
 struct ConnectionFeedbackFixture: Decodable {
     let account: String
+    let previousAccount: String?
     let server: String
     let result: String
 }
@@ -179,7 +180,11 @@ struct NativeContracts {
                 from: Data(contentsOf: directory.appendingPathComponent("feedback.json")))
             try require(UUID(uuidString: fixture.account) != nil, "测试凭证身份无效")
             try await KeychainStore().remove(account: fixture.account)
-        } else if mode == "retry-feedback" || mode == "authorization-feedback" {
+            if let previous = fixture.previousAccount {
+                try require(UUID(uuidString: previous) != nil, "测试旧凭证身份无效")
+                try await KeychainStore().remove(account: previous)
+            }
+        } else if ["retry-feedback", "authorization-feedback", "authorization-replacement", "authorization-pending-reconnect"].contains(mode) {
             let fixture = try JSONDecoder().decode(ConnectionFeedbackFixture.self,
                 from: Data(contentsOf: directory.appendingPathComponent("feedback.json")))
             let resources = directory.appendingPathComponent("resources")
@@ -189,14 +194,22 @@ struct NativeContracts {
             _ = try await credentialStore.create(account: fixture.account)
             var saved = SavedConfiguration()
             saved.name = "Contract Mac"
-            if mode == "retry-feedback" {
+            if mode != "authorization-feedback" {
                 saved.connection = ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server)
-                saved.keychainAccount = fixture.account
-                saved.device = PairedDevice(deviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", namespace: "ns_1", name: saved.name)
-            } else {
+                saved.keychainAccount = fixture.previousAccount ?? fixture.account
+                saved.device = PairedDevice(deviceID: fixture.previousAccount != nil
+                    ? "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" : "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                    namespace: "ns_1", name: saved.name)
+            }
+            if mode != "retry-feedback" {
                 saved.pending = PendingConnection(account: fixture.account, connection: ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server),
                     authorization: AuthorizationCreated(authorizationID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                         browserToken: String(repeating: "b", count: 64), expiresAt: "2100-01-01T00:00:00Z"))
+            }
+            if mode == "authorization-replacement" || mode == "authorization-pending-reconnect" {
+                guard let previous = fixture.previousAccount else { throw ClientError.message("测试缺少旧凭证身份") }
+                _ = try await credentialStore.create(account: previous)
+                if fixture.result == "cleanup-failure" { saved.retiredAccounts = [fixture.account] }
             }
             try await ConfigurationStore(directory: state).save(saved)
             let model = CompanionModel(state: state, resources: resources)
@@ -217,7 +230,7 @@ struct NativeContracts {
             var attentionCount = 0
             model.attention = { attentionCount += 1 }
             do {
-                try await model.restore()
+                try await model.restore(connect: mode == "retry-feedback" || mode == "authorization-feedback")
                 if mode == "retry-feedback" {
                     try require(presentation.snapshot(surface: .workbench).connection == "connecting",
                         "宿主启动后尚未收到连接结果，却结束了连接反馈")
@@ -242,6 +255,84 @@ struct NativeContracts {
                     let expectedConnection = fixture.result == "online" ? "online" : fixture.result == "unauthorized" ? "revoked" : "offline"
                     try require(presentation.snapshot(surface: .workbench).connection == expectedConnection,
                         "连接结果未向界面发布正确状态")
+                } else if mode == "authorization-pending-reconnect" {
+                    try await model.retry()
+                    try await feedbackCheckpoint("pending-current-started")
+                    while model.status != "online" { _ = await stateUpdates.next() }
+                    model.resumeAuthorization()
+                    try await feedbackCheckpoint("authorization-started")
+                    try await feedbackCheckpoint("authorization-result")
+                    while model.authorizationWaiting { _ = await authorizationUpdates.next() }
+                    let failure = model.error
+                    let message = presentation.snapshot(surface: .workbench).authorizationError
+                    try require(failure != nil && !message.isEmpty, "待授权请求失败没有显示恢复原因")
+                    try await feedbackCheckpoint("pending-current-offline")
+                    while model.status != "offline" { _ = await stateUpdates.next() }
+                    try await feedbackCheckpoint("pending-current-recovered")
+                    while model.status != "online" { _ = await stateUpdates.next() }
+                    let snapshot = presentation.snapshot(surface: .workbench)
+                    try require(model.saved.keychainAccount == fixture.previousAccount
+                        && model.saved.pending?.account == fixture.account
+                        && model.saved.pending?.connection == saved.pending?.connection
+                        && model.saved.pending?.authorization?.authorizationID == saved.pending?.authorization?.authorizationID,
+                        "旧连接恢复改变了当前身份或待授权记录")
+                    try require(snapshot.connected && snapshot.authorizationPhase == "waiting"
+                        && model.error == failure && snapshot.authorizationError == message,
+                        "旧连接恢复在线清除了另一次待授权请求的错误")
+                } else if mode == "authorization-replacement" {
+                    if fixture.result != "cleanup-failure" {
+                        try await model.retry()
+                        try await feedbackCheckpoint("replacement-started")
+                        while model.status != "unauthorized" { _ = await stateUpdates.next() }
+                    }
+                    model.resumeAuthorization()
+                    try await feedbackCheckpoint("authorization-started")
+                    try require(model.authorizationWaiting, "替换授权回执尚未到达却结束了等待")
+                    try await feedbackCheckpoint("authorization-result")
+                    while model.authorizationWaiting { _ = await authorizationUpdates.next() }
+                    let persisted = try await ConfigurationStore(directory: state).read()
+                    try require(model.saved.pending == nil && model.saved.keychainAccount == fixture.account
+                        && persisted.pending == nil && persisted.keychainAccount == fixture.account
+                        && model.saved.device == persisted.device && model.saved.device?.deviceID != saved.device?.deviceID,
+                        "授权提交后的失败丢失或回退了新身份")
+                    try require(model.authorizationNotice.isEmpty, "新身份仍显示旧授权失效通知")
+                    let snapshot = presentation.snapshot(surface: .workbench)
+                    if fixture.result == "online" {
+                        try require(model.error == nil && snapshot.connection == "connecting"
+                            && snapshot.connectionReason == .authorization && !snapshot.connected,
+                            "替换授权未等待新宿主在线回执")
+                        try await feedbackCheckpoint("authorization-connected")
+                        while model.status != "online" { _ = await stateUpdates.next() }
+                        try require(presentation.snapshot(surface: .workbench).connected && model.error == nil,
+                            "新宿主在线回执未恢复连接")
+                    } else {
+                        try require(model.status == "offline" && snapshot.connection == "offline" && !snapshot.connected,
+                            "新身份提交后的本机失败仍显示旧授权失效")
+                        let expected: ClientError = .message(fixture.result == "cleanup-failure"
+                            ? "设备凭证清理记录无效" : "操作尚未完成，请重试")
+                        try require(model.error == expected && snapshot.connectionError == model.localization.message(expected),
+                            "清理或宿主启动失败被吞掉或未向界面保留真实原因")
+                        if fixture.result == "cleanup-failure" {
+                            let retry = await presentation.handle(.retry)
+                            if retry.ok { try await feedbackCheckpoint("cleanup-retry-started") }
+                            try require(!retry.ok && retry.message == model.localization.message(expected),
+                                "重新连接绕过了仍非法的退休凭证集合")
+                            let retried = presentation.snapshot(surface: .workbench)
+                            let retained = try await ConfigurationStore(directory: state).read()
+                            try require(model.status == "offline" && retried.connection == "offline" && !retried.connected
+                                && model.error == expected && retried.connectionError == model.localization.message(expected),
+                                "清理失败后的重试丢失了离线状态或真实错误")
+                            try require(retained.keychainAccount == persisted.keychainAccount && retained.device == persisted.device
+                                && retained.pending == nil && retained.retiredAccounts == persisted.retiredAccounts
+                                && model.saved.keychainAccount == fixture.account,
+                                "清理失败后的重试改变了已提交身份或退休记录")
+                            await credentialStore.clear()
+                            _ = try await credentialStore.read(account: fixture.account)
+                            _ = try await credentialStore.read(account: fixture.previousAccount!)
+                            try require(persisted.retiredAccounts.contains(fixture.account), "清理失败丢失了待处理记录")
+                        }
+                    }
+                    try require(attentionCount == 0, "替换授权自动展开了客户端")
                 } else {
                     try require(model.authorizationWaiting && presentation.snapshot(surface: .workbench).authorizationPhase == "waiting",
                         "浏览器授权等待没有保持当前阶段")
@@ -285,10 +376,12 @@ struct NativeContracts {
                 }
                 presentation.close(); await model.shutdown()
                 try await credentialStore.remove(account: fixture.account)
+                if let previous = fixture.previousAccount { try await credentialStore.remove(account: previous) }
             } catch {
                 cancellation?.cancel(); _ = await cancellation?.value
                 presentation.close(); await model.shutdown()
                 try await credentialStore.remove(account: fixture.account)
+                if let previous = fixture.previousAccount { try await credentialStore.remove(account: previous) }
                 throw error
             }
         } else if mode == "revocation-success" || mode == "revocation-failure" {
@@ -466,7 +559,7 @@ struct NativeContracts {
             guard let settled = PanelGeometry(anchor: settledAnchor, screen: launchScreen, contentHeight: 230) else {
                 throw ClientError.message("状态栏窗口落位后没有生成浮层")
             }
-            try require(settled.frame == CGRect(x: 610, y: 712, width: 346, height: 230),
+            try require(settled.frame == CGRect(x: 644, y: 712, width: 312, height: 230),
                 "状态栏窗口落位后没有恢复完整尺寸与边缘对齐")
             for screen in [CGRect(x: 0, y: 40, width: 1512, height: 904), CGRect(x: -1440, y: -900, width: 1440, height: 875)] {
                 for center in [screen.minX + 40, screen.midX, screen.maxX - 40] {
@@ -475,7 +568,7 @@ struct NativeContracts {
                         guard let geometry = PanelGeometry(anchor: anchor, screen: screen, contentHeight: height) else {
                             throw ClientError.message("有效菜单栏位置未生成浮层")
                         }
-                        try require(geometry.frame.width == 346 && screen.contains(geometry.frame), "浮层越过当前屏幕或未使用约定宽度")
+                        try require(geometry.frame.width == 312 && screen.contains(geometry.frame), "浮层越过当前屏幕或未使用约定宽度")
                         try require(geometry.frame.maxY == anchor.minY - 2, "浮层没有贴住菜单栏下边缘")
                         try require(geometry.frame.height == min(height, geometry.maximumContentHeight), "浮层仍包含正文以外的高度")
                         if center <= screen.midX { try require(geometry.frame.minX == anchor.minX, "右侧空间充足时没有按左边对齐") }

@@ -8,7 +8,7 @@
 2. 打开客户端，在“连接”页填写服务地址，再在浏览器登录并授权。菜单栏图标打开状态浮层，其中的设置按钮进入工作台。API 使用独立地址时可展开填写；地址不含 `/api`。
 3. 客户端显示“已连接”后，在 Studio 网页发起会话；顶部“本机资源”可查看设备状态和当前会话的确认选择。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
 
-应用使用 ad-hoc 签名，**未通过 Apple 公证**。macOS 阻止打开时，核对下载来源后，在“系统设置 → 隐私与安全性”中找到 TinkerFin 并选择“仍要打开”；不要关闭系统安全保护；操作见 [Apple 说明](https://support.apple.com/en-us/102445)。ZIP 的 SHA-256 文件随发行包提供。
+发行包使用固定自签证书，**未通过 Apple 公证**。macOS 阻止打开时，核对下载来源后，在“系统设置 → 隐私与安全性”中找到 TinkerFin 并选择“仍要打开”；不要关闭系统安全保护；操作见 [Apple 说明](https://support.apple.com/en-us/102445)。ZIP 的 SHA-256 文件随发行包提供。
 
 在“连接”页修改服务地址可连接其他 Studio；新授权成功后停止原服务的本机执行并切换。地址须使用 HTTPS，HTTP 仅允许本机回环开发地址。网页部署应设置 `VITE_STUDIO_API_ADDRESS`，供客户端发现 API；无法发现时需要手动填写。
 
@@ -41,11 +41,20 @@ uv run python apps/desktop/scripts/build_macos.py --output dist/TinkerFin.app
 
 ## 发布
 
-`Desktop release` 工作流只由 `desktop-vX.Y.Z` 标签或选择现有标签的手动操作触发。标签版本必须与 `pyproject.toml` 中的桌面版本一致。仓库须配置 `DESKTOP_UPDATE_SIGNING_KEY` Secret（Base64 编码的 Ed25519 私钥），与客户端固定公钥对应。工作流在 Apple Silicon 上执行检查、构建和应用验收，为更新清单签名，校验上传附件后才公开 Release。普通推送和 PR 只运行受影响的检查。
+`Desktop release` 工作流只由 `desktop-vX.Y.Z` 标签或选择现有标签的手动操作触发。标签版本必须与 `pyproject.toml` 中的桌面版本一致。仓库须配置以下 Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `DESKTOP_CODE_SIGNING_P12` | Base64 编码的签名证书与私钥，证书须匹配 `resources/code-signing.pem` |
+| `DESKTOP_CODE_SIGNING_PASSWORD` | P12 密码 |
+| `DESKTOP_UPDATE_SIGNING_KEY` | Base64 编码的 Ed25519 私钥，须匹配客户端更新公钥 |
+
+后续发布必须沿用同一代码签名证书和私钥。工作流在独占 Apple Silicon runner 构建，清理临时签名资源后校验安装包及更新清单；下载回验通过才公开 Release。普通推送和 PR 只运行受影响的检查。
 
 ```bash
-git tag desktop-v0.1.2
-git push origin desktop-v0.1.2
+tag="desktop-v$(uv run --no-project python -c 'import tomllib; print(tomllib.load(open("apps/desktop/pyproject.toml", "rb"))["project"]["version"])')"
+git tag "$tag"
+git push origin "$tag"
 ```
 
 ## 验证

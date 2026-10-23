@@ -388,11 +388,36 @@ async def run_feedback_contract(
     host_server = await asyncio.start_server(host_connected, "127.0.0.1", 0)
     server = await asyncio.start_server(connected, "127.0.0.1", 0)
     account = str(uuid4())
+    previous_account = (
+        str(uuid4())
+        if mode in {"authorization-replacement", "authorization-pending-reconnect"}
+        else None
+    )
     resources = directory / "resources"
     executable = resources / "python/bin/python3"
     executable.parent.mkdir(parents=True)
     fixture = Path(__file__).parent / "native/feedback_host.py"
-    executable.write_text(f"#!{Path(sys.executable).resolve()}\n" + fixture.read_text())
+    if mode == "authorization-replacement":
+        # 旧宿主可在授权失效后直接退出，不能依赖额外的 stopped 事件覆盖旧状态
+        executable.write_text(
+            f"#!{Path(sys.executable).resolve()}\n"
+            "import json, socket, sys\n"
+            "from pathlib import Path\n"
+            "resources = Path(__file__).resolve().parents[2]\n"
+            "(resources / 'feedback-host-started').touch()\n"
+            "port = json.loads((resources / 'feedback-control.json').read_text())['port']\n"
+            "assert json.loads(sys.stdin.readline())['kind'] == 'initialize'\n"
+            "with socket.create_connection(('127.0.0.1', port)) as control:\n"
+            "    with control.makefile('r') as events:\n"
+            "        event = json.loads(events.readline())\n"
+            "        print(json.dumps(event), flush=True)\n"
+            "        for line in sys.stdin:\n"
+            "            if json.loads(line)['kind'] == 'stop': break\n"
+        )
+    else:
+        executable.write_text(
+            f"#!{Path(sys.executable).resolve()}\n" + fixture.read_text()
+        )
     executable.chmod(0o700)
     (resources / "feedback-control.json").write_text(
         json.dumps({"port": host_server.sockets[0].getsockname()[1]})
@@ -401,6 +426,7 @@ async def run_feedback_contract(
         json.dumps(
             {
                 "account": account,
+                "previousAccount": previous_account,
                 "server": f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}",
                 "result": result,
             }
@@ -474,6 +500,19 @@ async def run_feedback_contract(
             if checkpoint == "initial-started":
                 current_host = await while_running(hosts.get())
                 await send_host({"kind": "state", "state": "offline"})
+            elif checkpoint == "replacement-started":
+                current_host = await while_running(hosts.get())
+                await send_host({"kind": "state", "state": "unauthorized"})
+            elif checkpoint == "cleanup-retry-started":
+                current_host = await while_running(hosts.get())
+                await send_host({"kind": "state", "state": "online"})
+            elif checkpoint == "pending-current-started":
+                current_host = await while_running(hosts.get())
+                await send_host({"kind": "state", "state": "online"})
+            elif checkpoint == "pending-current-offline":
+                await send_host({"kind": "state", "state": "offline"})
+            elif checkpoint == "pending-current-recovered":
+                await send_host({"kind": "state", "state": "online"})
             elif checkpoint == "retry-started":
                 current_host = await while_running(hosts.get())
                 await send_host({"kind": "state", "state": "connecting"})
@@ -488,10 +527,22 @@ async def run_feedback_contract(
                 current_request = await while_running(requests.get())
             elif checkpoint == "authorization-result":
                 assert current_request is not None
+                if (
+                    mode == "authorization-replacement"
+                    and result == "host-start-failure"
+                ):
+                    executable.chmod(0o600)
                 response = (
                     (503, {"code": 1})
                     if result == "error"
-                    else (200, authorization(result))
+                    else (
+                        200,
+                        authorization(
+                            "authorized"
+                            if mode == "authorization-replacement"
+                            else result
+                        ),
+                    )
                 )
                 current_request.set_result(response)
             elif checkpoint == "authorization-connected":
@@ -515,6 +566,8 @@ async def run_feedback_contract(
         await exited
         assert process.returncode == 0, (await diagnostics).decode()
         assert value == f"verified {mode}" and not stdout
+        if mode == "authorization-replacement" and result == "cleanup-failure":
+            assert not (resources / "feedback-host-started").exists()
     finally:
         if process is not None:
             if process.returncode is None:
@@ -561,6 +614,25 @@ async def test_native_authorization_feedback_covers_completion_failure_and_cance
 ):
     await run_feedback_contract(
         swift_contracts, tmp_path, "authorization-feedback", result
+    )
+
+
+@pytest.mark.companion_integration
+@pytest.mark.parametrize("result", ["cleanup-failure", "host-start-failure", "online"])
+async def test_native_new_authorization_replaces_revoked_state_and_preserves_failures(
+    swift_contracts, tmp_path, result
+):
+    await run_feedback_contract(
+        swift_contracts, tmp_path, "authorization-replacement", result
+    )
+
+
+@pytest.mark.companion_integration
+async def test_native_pending_authorization_error_survives_current_connection_recovery(
+    swift_contracts, tmp_path
+):
+    await run_feedback_contract(
+        swift_contracts, tmp_path, "authorization-pending-reconnect", "error"
     )
 
 

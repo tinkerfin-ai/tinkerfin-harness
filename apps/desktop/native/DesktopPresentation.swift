@@ -54,7 +54,8 @@ final class DesktopPresentation {
         }
         value.connectionError = !model.authorizationNotice.isEmpty ? model.localization.text(model.authorizationNotice)
             : !model.ready && model.status == "failed" ? "请检查本机配置后重试"
-            : model.status == "failed" ? model.localization.text("请检查服务地址后重试") : ""
+            : model.status == "failed" ? model.localization.text("请检查服务地址后重试")
+            : model.connection == "offline" ? model.error.map(model.localization.message) ?? "" : ""
         value.update = update; value.update.currentVersion = value.version; value.resume = viewState
         return value
     }

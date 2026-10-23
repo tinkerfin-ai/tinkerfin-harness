@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-desktop"
-version = "0.1.4"
+version = "0.1.5"
 description = "TinkerFin Studio macOS tool execution companion."
 readme = "README.md"
 requires-python = ">=3.11"

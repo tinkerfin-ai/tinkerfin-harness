@@ -299,7 +299,14 @@ def relocate_entrypoints(resources: Path) -> None:
         shutil.rmtree(cache)
 
 
-def sign(app: Path, identity: str, temporary: Path) -> None:
+def sign(
+    app: Path,
+    identity: str,
+    temporary: Path,
+    *,
+    keychain: Path | None = None,
+    timestamp: bool = False,
+) -> None:
     """从嵌套二进制到应用逐层签名，任务解释器保留 JIT 和已授权依赖加载能力"""
     entitlements = temporary / "runtime-entitlements.plist"
     entitlements.write_bytes(
@@ -311,6 +318,10 @@ def sign(app: Path, identity: str, temporary: Path) -> None:
             }
         )
     )
+    signing = ["codesign", "--force", "--sign", identity, "--options", "runtime"]
+    if keychain is not None:
+        signing += ["--keychain", str(keychain)]
+    signing.append("--timestamp" if timestamp else "--timestamp=none")
     for path in sorted(app.rglob("*"), key=lambda item: len(item.parts), reverse=True):
         if path.is_symlink():
             continue
@@ -321,22 +332,11 @@ def sign(app: Path, identity: str, temporary: Path) -> None:
             with path.open("rb") as stream:
                 if stream.read(4) not in MACHO:
                     continue
-        args = ["codesign", "--force", "--sign", identity, "--options", "runtime"]
+        args = list(signing)
         if path.name in {"python3.11", "node"}:
             args += ["--entitlements", str(entitlements)]
-        if identity != "-":
-            args.append("--timestamp")
         run(*args, path)
-    run(
-        "codesign",
-        "--force",
-        "--sign",
-        identity,
-        "--options",
-        "runtime",
-        *(["--timestamp"] if identity != "-" else []),
-        app,
-    )
+    run(*signing, app)
     run("codesign", "--verify", "--deep", "--strict", app)
 
 
@@ -374,6 +374,8 @@ def build(
     python_archive: Path,
     node_archive: Path,
     identity: str,
+    keychain: Path | None = None,
+    timestamp: bool = False,
 ) -> Path:
     """完成全部检查后才发布新的 .app 和 ZIP，不覆盖既有构建或用户安装"""
     if sys.platform != "darwin" or platform.machine() != "arm64":
@@ -460,7 +462,7 @@ def build(
         for path in app.rglob("*"):
             if path.is_symlink() and not path.resolve().is_relative_to(app):
                 raise ValueError(f"应用含外部链接：{path.relative_to(app)}")
-        sign(app, identity, temporary)
+        sign(app, identity, temporary, keychain=keychain, timestamp=timestamp)
         run(
             resources / "python/bin/python3",
             "-I",
@@ -499,7 +501,11 @@ def main() -> None:
     parser.add_argument("--python-archive", type=Path)
     parser.add_argument("--node-archive", type=Path)
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
-    parser.add_argument("--identity", default="-")
+    parser.add_argument("--identity", default="-", help="签名证书指纹；- 使用临时签名")
+    parser.add_argument("--keychain", type=Path, help="存放签名身份的钥匙串路径")
+    parser.add_argument(
+        "--timestamp", action="store_true", help="请求 Apple 签名时间戳"
+    )
     args = parser.parse_args()
     print(
         build(
@@ -507,6 +513,8 @@ def main() -> None:
             python_archive=args.python_archive or obtain(PYTHON, args.cache),
             node_archive=args.node_archive or obtain(NODE, args.cache),
             identity=args.identity,
+            keychain=args.keychain,
+            timestamp=args.timestamp,
         )
     )
 

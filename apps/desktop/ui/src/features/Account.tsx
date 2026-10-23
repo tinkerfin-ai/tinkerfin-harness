@@ -57,7 +57,7 @@ export function Account({ state, view, change }: Props) {
     </div></main>
     <footer className="account-footer"><Button variant="ghost" leadingIcon={<LogOut size={16} />} loading={busy} disabled={saving} onClick={() => void logout.run({ type: 'logout' }, result => {
       if (result.ok) {
-        change({ page: 'connection', connectionForm: true, editingName: false, name: state.name, service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: state.api !== state.service })
+        change({ page: 'connection', connectionForm: true, editingName: false, name: state.name, service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: false })
         setError('')
       }
     })}>{t('退出登录')}</Button></footer>

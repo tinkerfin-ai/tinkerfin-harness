@@ -39,7 +39,7 @@ export function Connection({ state, view, change }: Props) {
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return
       event.preventDefault()
-      change({ service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: state.api !== state.service })
+      change({ service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: false })
       setErrors({ service: '', api: '' })
     }
     document.addEventListener('keydown', cancel)
@@ -102,7 +102,7 @@ export function Connection({ state, view, change }: Props) {
       </ValidatedForm>
     </main>
     <footer className="pane-actions">
-      {changed && <Button variant="text" disabled={busy} onClick={() => { change({ service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: state.api !== state.service }); setErrors({ service: '', api: '' }) }}>{t('取消')}</Button>}
+      {changed && <Button variant="text" disabled={busy} onClick={() => { change({ service: state.service, api: state.api === state.service ? '' : state.api, manualAPI: false }); setErrors({ service: '', api: '' }) }}>{t('取消')}</Button>}
       {state.connected && !changed && !errors.service && !errors.api
         ? <Button variant="primary" leadingIcon={<ArrowUpRight />} onClick={() => void send({ type: 'open-studio' })}>{t('打开 Studio')}</Button>
         : <Button type="submit" form="connection-form" variant="primary" loading={busy} disabled={!state.ready}>{t('连接并授权')}</Button>}

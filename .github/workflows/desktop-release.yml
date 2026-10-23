@@ -81,14 +81,21 @@ jobs:
         with:
           path: ~/Library/Caches/TinkerFin/build-inputs
           key: desktop-inputs-arm64-${{ hashFiles('apps/desktop/scripts/runtime_inputs.py') }}
-      - name: Build ad-hoc signed application
-        run: uv run python apps/desktop/scripts/build_macos.py --output dist/TinkerFin.app
+      - name: Build with the fixed release identity
+        id: signing
+        env:
+          DESKTOP_CODE_SIGNING_P12: ${{ secrets.DESKTOP_CODE_SIGNING_P12 }}
+          DESKTOP_CODE_SIGNING_PASSWORD: ${{ secrets.DESKTOP_CODE_SIGNING_PASSWORD }}
+        run: uv run python apps/desktop/scripts/release_signing.py build --output dist/TinkerFin.app --state "$RUNNER_TEMP/tinkerfin-release-signing-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Remove release signing resources
+        if: always() && (steps.signing.outcome == 'success' || steps.signing.outcome == 'failure' || steps.signing.outcome == 'cancelled')
+        run: uv run python apps/desktop/scripts/release_signing.py cleanup --state "$RUNNER_TEMP/tinkerfin-release-signing-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
       - name: Verify the packaged application
         env:
           TINKERFIN_TEST_APP: ${{ github.workspace }}/dist/TinkerFin.app
         run: |
           uv run pytest apps/desktop/tests/test_app_bundle.py -q
-          codesign --verify --deep --strict dist/TinkerFin.app
+          uv run python apps/desktop/scripts/release_signing.py verify --app dist/TinkerFin.app
           cd dist
           shasum -a 256 -c TinkerFin.zip.sha256
       - name: Sign update manifest
@@ -104,7 +111,7 @@ jobs:
 
           Download `TinkerFin.zip`, extract it and install it at `/Applications/TinkerFin.app`. Quit any installed copy and choose Replace before opening the new app. Enter your Studio address and authorize the connection in your browser. Python, Node.js and browser tools are included; users do not need to compile anything.
 
-          This build is ad-hoc signed and is **not notarized by Apple**. If macOS blocks it, open System Settings → Privacy & Security and choose Open Anyway for TinkerFin after checking the download source. Do not disable Gatekeeper.
+          Releases use a fixed self-signed certificate and are **not notarized by Apple**. If macOS blocks it, open System Settings → Privacy & Security and choose Open Anyway for TinkerFin after checking the download source. Do not disable Gatekeeper. Grant Accessibility and Screen Recording access when using desktop tools.
 
           The ZIP checksum is attached. Third-party licenses and dependency inventories are included in `TinkerFin.app/Contents/Resources/licenses`.
 
@@ -116,4 +123,6 @@ jobs:
           gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-check"
           (cd "$RUNNER_TEMP/release-check" && shasum -a 256 -c TinkerFin.zip.sha256)
           uv run python apps/desktop/scripts/sign_update.py --verify --app dist/TinkerFin.app --archive "$RUNNER_TEMP/release-check/TinkerFin.zip" --output "$RUNNER_TEMP/release-check/update.json"
+          ditto -x -k "$RUNNER_TEMP/release-check/TinkerFin.zip" "$RUNNER_TEMP/release-extracted"
+          uv run python apps/desktop/scripts/release_signing.py verify --app "$RUNNER_TEMP/release-extracted/TinkerFin.app"
           gh release edit "$RELEASE_TAG" --draft=false

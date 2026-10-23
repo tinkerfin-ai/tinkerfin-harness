@@ -1,4 +1,4 @@
-"""真实 ad-hoc 身份的更新凭证交接，只使用本轮独占账户和临时应用"""
+"""真实 ad-hoc 身份的凭证交接与退休清理，只使用本轮独占账户和临时应用"""
 
 import asyncio
 import base64
@@ -197,10 +197,14 @@ def _prepare_update(credential_apps, tmp_path: Path) -> _PreparedUpdate:
 
 
 async def _remove_owned_credentials(
-    service: str, directory: Path, source_account: str, target_account: str | None
+    service: str,
+    directory: Path,
+    source_account: str,
+    target_account: str | None,
+    extra_accounts: tuple[str, ...] = (),
 ) -> None:
     # 回执丢失时也从本轮交接记录找回账户；所有删除限定唯一测试service
-    accounts = {source_account}
+    accounts = {source_account, *extra_accounts}
     if target_account:
         accounts.add(target_account)
     cleanup = []
@@ -278,7 +282,15 @@ async def test_signed_update_credentials_recover_without_exposing_or_orphaning_s
         assert json.loads((state / "settings.json").read_text()) == initial
         assert await command(target, "read", directory, target_account) == 0
         assert await command(untrusted, "read", directory, target_account) == 1
-        assert await command(untrusted, "remove", directory, target_account) == 1
+        assert (
+            await command(
+                untrusted,
+                "--remove-update-credential",
+                directory,
+                payload=b"0" * 64,
+            )
+            == 1
+        )
         assert await command(target, "read", directory, target_account) == 0
         assert await command(installed, "read", directory, target_account) == 1
         assert await command(installed, "cleanup", directory) == 1
@@ -349,6 +361,96 @@ async def test_signed_update_credentials_recover_without_exposing_or_orphaning_s
     finally:
         await _remove_owned_credentials(
             service, directory, source_account, target_account
+        )
+
+
+@pytest.mark.companion_integration
+@pytest.mark.parametrize("collision", [None, "current", "pending"])
+async def test_native_retirement_preserves_active_identity_and_restores_host(
+    credential_apps, tmp_path, collision
+):
+    (source, _, _), _, _, service = credential_apps
+    prepared = _prepare_update(credential_apps, tmp_path)
+    directory, target = prepared.directory, prepared.target
+    active_account, pending_account = str(uuid4()), str(uuid4())
+    report = prepared.state / "host-observation.json"
+    executable = prepared.state / "host-resources/python/bin/python3"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(
+        f"#!{Path(sys.executable).resolve()}\n"
+        "import json, re, sys\n"
+        "from pathlib import Path\n"
+        "message = json.loads(sys.stdin.readline())\n"
+        "assert message['kind'] == 'initialize'\n"
+        "configuration = message['configuration']\n"
+        "assert configuration['device_id'] == 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'\n"
+        "assert configuration['namespace'] == 'ns_test'\n"
+        "assert re.fullmatch('[0-9a-f]{64}', configuration['credential'])\n"
+        f"report = Path({str(report)!r})\n"
+        "report.write_text(json.dumps({'initialized': True, 'stopped': False}))\n"
+        "print(json.dumps({'kind':'state','state':'online'}), flush=True)\n"
+        "for line in sys.stdin:\n"
+        "    message = json.loads(line)\n"
+        "    if message['kind'] == 'stop':\n"
+        "        report.write_text(json.dumps({'initialized': True, 'stopped': True}))\n"
+        "        break\n"
+        "    assert message['kind'] == 'native_readiness'\n"
+    )
+    executable.chmod(0o700)
+    try:
+        assert (
+            await command(
+                prepared.installed, "setup", directory, prepared.source_account
+            )
+            == 0
+        )
+        assert await command(target, "create", directory, active_account) == 0
+        assert await command(target, "read", directory, prepared.source_account) == 1
+        settings_path = prepared.state / "settings.json"
+        settings = json.loads(settings_path.read_text())
+        settings["keychainAccount"] = active_account
+        settings["retiredAccounts"] = [prepared.source_account, str(uuid4())]
+        if collision == "current":
+            settings["retiredAccounts"].append(active_account)
+        elif collision == "pending":
+            assert await command(target, "create", directory, pending_account) == 0
+            settings["pending"] = {
+                "account": pending_account,
+                "connection": settings["connection"],
+            }
+            settings["retiredAccounts"].append(pending_account)
+        settings_path.write_text(json.dumps(settings))
+
+        mode = "restore-retired" if collision is None else "reject-retired"
+        assert await command(target, mode, directory) == 0
+        assert await command(target, "read", directory, active_account) == 0
+        persisted = json.loads(settings_path.read_text())
+        assert persisted["keychainAccount"] == active_account
+        if collision is None:
+            assert persisted["retiredAccounts"] == []
+            assert (
+                await command(source, "read", directory, prepared.source_account) == 1
+            )
+            assert json.loads(report.read_text()) == {
+                "initialized": True,
+                "stopped": True,
+            }
+        else:
+            assert persisted["retiredAccounts"] == settings["retiredAccounts"]
+            assert (
+                await command(source, "read", directory, prepared.source_account) == 0
+            )
+            assert not report.exists()
+            if collision == "pending":
+                assert persisted["pending"]["account"] == pending_account
+                assert await command(target, "read", directory, pending_account) == 0
+    finally:
+        await _remove_owned_credentials(
+            service,
+            directory,
+            prepared.source_account,
+            active_account,
+            extra_accounts=(pending_account,),
         )
 
 

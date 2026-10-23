@@ -21,22 +21,71 @@ async function open(page: Page, patch: Partial<DesktopState> = {}) {
     } } } }
   }, fixture(patch))
   await page.goto('/')
-  await expect(page.getByRole('navigation')).toBeVisible()
+  await expect(page.getByRole(patch.surface === 'status' ? 'status' : 'navigation')).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
 }
 
 for (const theme of ['light', 'dark'] as const) {
+  test(`${theme} 菜单栏设备与状态同一行且长名称不挤压操作`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 312, height: 56 })
+    await open(page, { theme, surface: 'status', name: "Yunsan's Mac 🐼" })
+    for (const connection of ['online', 'connecting', 'offline'] as const) {
+      await page.evaluate(connection => {
+        window.desktopTestState = { ...window.desktopTestState, revision: window.desktopTestState.revision + 1, connection, connected: connection === 'online' }
+        window.receiveDesktopState(window.desktopTestState)
+      }, connection)
+      const title = page.getByText("Yunsan's Mac 🐼", { exact: true })
+      const status = page.getByRole('status')
+      await expect(status).toHaveText(connection === 'online' ? '已连接' : connection === 'connecting' ? '连接中' : '未连接')
+      const nameBox = (await title.boundingBox())!, stateBox = (await status.boundingBox())!
+      expect(Math.abs(nameBox.y + nameBox.height / 2 - stateBox.y - stateBox.height / 2)).toBeLessThanOrEqual(1)
+      expect(stateBox.x).toBeGreaterThanOrEqual(nameBox.x + nameBox.width)
+      for (const label of ['设置', '退出']) {
+        const button = page.getByRole('button', { name: label })
+        const bounds = (await button.boundingBox())!
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(312)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(56)
+      }
+      await page.screenshot({ path: info.outputPath(`status-${connection}.png`) })
+    }
+    await page.evaluate(() => {
+      window.desktopTestState = { ...window.desktopTestState, revision: window.desktopTestState.revision + 1, locale: 'en', language: 'en', name: '非常长的研究设备名称 Long research workstation' }
+      window.receiveDesktopState(window.desktopTestState)
+    })
+    await expect(page.getByRole('status')).toHaveText('Disconnected')
+    await expect(page.getByText('非常长的研究设备名称 Long research workstation', { exact: true })).toHaveCSS('text-overflow', 'ellipsis')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight)).toBe(true)
+    await page.getByRole('button', { name: 'Settings', exact: true }).focus()
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await page.screenshot({ path: info.outputPath('status-long-name.png') })
+  })
+
   test(`${theme} 页面、边框与行末位置`, async ({ page }, info) => {
     const external: string[] = []
     page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:8770/')) external.push(request.url()) })
-    await open(page, { theme })
+    await open(page, { theme, api: 'https://api.example.com' })
+    const footer = page.getByRole('button', { name: '打开 Studio', exact: true })
+    const footerBox = (await footer.boundingBox())!
+    expect(footerBox.x + footerBox.width).toBe(638)
+    expect(footerBox.y + footerBox.height).toBe(348)
+    expect((await page.getByRole('button', { name: '量化研究 · 在 Finder 中打开' }).boundingBox())?.height).toBe(48)
     const refresh = page.getByRole('button', { name: '刷新', exact: true })
     const refreshBox = await refresh.boundingBox()
     expect(refreshBox?.x).toBe(594)
     expect(refreshBox?.width).toBe(32)
     await page.screenshot({ path: info.outputPath('workspace.png') })
     await page.getByRole('button', { name: '连接', exact: true }).click()
+    await expect(page.getByText('自动识别', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('API 地址')).toHaveCount(0)
     const service = page.getByLabel('服务地址')
+    expect((await footer.boundingBox())?.y).toBe(footerBox.y)
+    expect(await service.evaluate(node => node.closest('.desktop-field')!.getBoundingClientRect().height)).toBe(48)
+    expect(await page.getByText('自动识别', { exact: true }).evaluate(node => node.closest('.connection-row')!.getBoundingClientRect().height)).toBe(48)
+    await page.getByRole('button', { name: '手动填写', exact: true }).click()
+    const apiBox = (await page.getByLabel('API 地址').boundingBox())!
+    const restoreBox = (await page.getByRole('button', { name: '恢复自动识别' }).boundingBox())!
+    expect(Math.abs(apiBox.y + apiBox.height / 2 - restoreBox.y - restoreBox.height / 2)).toBeLessThanOrEqual(1)
+    await page.getByRole('button', { name: '恢复自动识别' }).click()
     const control = service.locator('..')
     const shadow = await control.evaluate(node => getComputedStyle(node).boxShadow)
     expect(shadow).not.toBe('none')
@@ -47,9 +96,17 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(control).toHaveCSS('box-shadow', shadow)
     await page.screenshot({ path: info.outputPath('connection.png') })
     await page.getByRole('button', { name: '权限', exact: true }).click()
+    const enable = page.getByRole('button', { name: '前往开启', exact: true })
+    await expect(enable).toHaveCSS('padding-left', '8px')
+    expect(await enable.evaluate(node => node.closest('.permission-row')!.getBoundingClientRect().height)).toBe(48)
+    await enable.hover()
     await page.screenshot({ path: info.outputPath('permissions.png') })
     await page.getByRole('button', { name: '我的', exact: true }).click()
     const update = page.getByRole('button', { name: '检查更新', exact: true })
+    expect(await update.evaluate(node => node.closest('.settings-row')!.getBoundingClientRect().height)).toBe(48)
+    const logoutBox = (await page.getByRole('button', { name: '退出登录' }).boundingBox())!
+    expect(logoutBox.y + logoutBox.height).toBe(360)
+    expect(logoutBox.height).toBe(56)
     expect((await update.boundingBox())?.x).toBe(refreshBox?.x)
     await page.screenshot({ path: info.outputPath('account.png') })
     await page.getByRole('button', { name: '编辑设备名称', exact: true }).click()
@@ -60,6 +117,40 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(name.locator('..')).toHaveCSS('border-top-width', '0px')
     await page.screenshot({ path: info.outputPath('name-error.png') })
     expect(external).toEqual([])
+  })
+
+  test(`${theme} 更多项目提示居中并随滚动与刷新收起`, async ({ page }, info) => {
+    await open(page, { theme })
+    const more = page.getByRole('button', { name: '向下查看更多项目' })
+    await expect(more).toHaveCount(0)
+    await page.evaluate(() => {
+      window.desktopTestState = { ...window.desktopTestState, revision: window.desktopTestState.revision + 1,
+        projects: Array.from({ length: 8 }, (_, index) => ({ id: `project-${index}`, name: `项目 ${index + 1}` })) }
+      window.receiveDesktopState(window.desktopTestState)
+    })
+    const workspace = page.getByRole('region', { name: '项目目录', exact: true })
+    await expect(more).toBeVisible()
+    const hintBox = (await more.boundingBox())!, paneBox = (await workspace.boundingBox())!
+    expect(hintBox.x + hintBox.width / 2).toBe(paneBox.x + paneBox.width / 2)
+    expect(await more.evaluate(node => getComputedStyle(node).backgroundColor)).toContain('0.82')
+    await page.screenshot({ path: info.outputPath('workspace-more.png') })
+    await more.click()
+    await expect(workspace).toBeFocused()
+    expect(await workspace.evaluate(node => node.scrollTop)).toBeGreaterThan(0)
+    await workspace.press('End')
+    await expect(more).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '项目 8 · 在 Finder 中打开' })).toBeInViewport()
+    await workspace.press('Home')
+    await expect(more).toBeVisible()
+    await page.getByRole('button', { name: '连接', exact: true }).click()
+    await page.getByRole('button', { name: '工作区', exact: true }).click()
+    await expect(more).toBeVisible()
+    await page.evaluate(() => {
+      window.desktopTestState = { ...window.desktopTestState, revision: window.desktopTestState.revision + 1, projects: [] }
+      window.receiveDesktopState(window.desktopTestState)
+    })
+    await expect(page.getByText('暂无项目')).toBeVisible()
+    await expect(more).toHaveCount(0)
   })
 }
 
