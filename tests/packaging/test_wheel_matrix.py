@@ -19,6 +19,9 @@ from packaging.utils import canonicalize_name
 from scripts.build_wheels import PROJECT_PATHS, project_paths_for
 
 _ROOT = Path(__file__).resolve().parents[2]
+_DESKTOP_VERSION = tomllib.loads(
+    (_ROOT / "apps/desktop/pyproject.toml").read_text(encoding="utf-8")
+)["project"]["version"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +142,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "companion-core",
-        "tinkerfin-desktop==0.1.2",
+        f"tinkerfin-desktop=={_DESKTOP_VERSION}",
         ("tinkerfin_desktop", "tinkerfin_desktop.host"),
         (
             "tinkerfin-desktop",
