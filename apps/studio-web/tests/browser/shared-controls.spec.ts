@@ -384,6 +384,14 @@ for (const language of ['zh-CN', 'en']) for (const theme of ['light', 'dark']) {
       await expect(trigger).toContainText(automatic)
       await trigger.click()
       await expect(panel.getByRole('radio', { name: automatic, exact: true })).toBeChecked()
+      const selectedOption = panel.locator('label').filter({ has: page.getByRole('radio', { name: automatic, exact: true }) })
+      const otherOption = panel.locator('label').filter({ has: page.getByRole('radio', { name: ask, exact: true }) })
+      await expect(selectedOption).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await selectedOption.hover()
+      await expect(selectedOption).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await otherOption.hover()
+      await expect(otherOption).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(selectedOption).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
       const bounds = (await panel.boundingBox())!
       expect(bounds.x).toBeGreaterThanOrEqual(0)
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
@@ -419,6 +427,10 @@ for (const state of ['online', 'offline', 'loading', 'error', 'empty']) {
       await expect(panel.getByRole('button')).toHaveCount(1)
       await expect(panel.getByRole('radio')).toHaveCount(state === 'online' ? 2 : 0)
       for (const radio of await panel.getByRole('radio').all()) await expect(radio).toBeDisabled()
+      for (const option of await panel.locator('label').all()) {
+        await option.hover()
+        await expect(option).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      }
       await panel.getByRole('button', { name: '打开本地设备设置', exact: true }).click()
     }
     await expect(panel).toBeHidden()

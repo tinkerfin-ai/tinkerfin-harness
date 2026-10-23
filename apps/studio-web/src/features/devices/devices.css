@@ -53,8 +53,7 @@
   .local-resources .lr-options::after { content: ""; display: table; clear: both; }
   .local-resources .lr-option { display: flex; align-items: center; clear: both; gap: 10px; position: relative; padding: 10px; border-radius: var(--radius-md); transition: background var(--motion-device-hover) ease; }
   .local-resources .lr-option + .lr-option { margin-top: 3px; }
-  .local-resources .lr-option:hover { background: var(--lr-hover); }
-  .local-resources .lr-option:has(input:checked) { background: var(--lr-selected); }
+  .local-resources .lr-option:hover:has(input:enabled:not(:checked)) { background: var(--lr-hover); }
   .local-resources .lr-option:has(input:focus-visible) { outline: auto; outline-offset: 2px; }
   .local-resources .lr-option-icon { display: inline-flex; align-self: flex-start; flex: 0 0 18px; margin-top: 1px; color: var(--lr-subtle); }
   .local-resources .lr-option-icon-alert { color: var(--lr-red); }
@@ -121,10 +120,8 @@
   .local-resources .lr-device-card, .local-resources .lr-empty { background: transparent; }
   .local-resources .lr-option { cursor: pointer; }
   .local-resources .lr-options:disabled .lr-option { cursor: not-allowed; opacity: .5; }
-  .local-resources .lr-options:disabled .lr-option:hover { background: transparent; }
-  .local-resources .lr-options:disabled .lr-option:has(input:checked) { background: var(--lr-selected); }
   .local-resources .lr-option:has(input:focus-visible) { outline: 2px solid var(--color-focus); }
-  .local-resources .lr-trigger:active:not(:disabled), .local-resources .lr-option:active:has(input:enabled) { background: var(--lr-selected); }
+  .local-resources .lr-trigger:active:not(:disabled), .local-resources .lr-option:active:has(input:enabled:not(:checked)) { background: var(--lr-selected); }
   .device-settings { --settings-control-height: 32px; min-width: 0; }
   .device-settings .lr-content-heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
   .device-settings .lr-content-heading h3 { margin: 0; font-family: var(--font-ui); font-size: var(--type-title-size); line-height: var(--type-title-line); }
