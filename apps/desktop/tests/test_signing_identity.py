@@ -63,6 +63,12 @@ class SigningApps:
     service: str
 
 
+@dataclass(frozen=True, slots=True)
+class TrustSettings:
+    fingerprints: frozenset[str]
+    serialized: bytes
+
+
 class ACLRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     authorizations: list[str]
@@ -104,15 +110,37 @@ def checked(label: str, *arguments: str | Path, password: str = "") -> str:
     return result.stdout
 
 
-def trust_settings(root: Path, label: str) -> bytes:
+def trust_settings(root: Path, label: str, *, admin: bool = False) -> TrustSettings:
     destination = root / f"trust-{label}.plist"
-    result = command("security", "trust-settings-export", destination)
+    result = command(
+        "security", "trust-settings-export", *(["-d"] if admin else []), destination
+    )
     if result.code and "no trust settings were found" in result.stderr.lower():
-        return plistlib.dumps({}, sort_keys=True)
+        return TrustSettings(frozenset(), plistlib.dumps({}, sort_keys=True))
     assert result.code == 0, result.stderr
     parsed = plistlib.loads(destination.read_bytes())
     assert isinstance(parsed, dict) and isinstance(parsed.get("trustList"), dict)
-    return plistlib.dumps(parsed["trustList"], sort_keys=True)
+    entries = parsed["trustList"]
+    assert all(isinstance(fingerprint, str) for fingerprint in entries)
+    return TrustSettings(
+        frozenset(fingerprint.upper() for fingerprint in entries),
+        plistlib.dumps(entries, sort_keys=True),
+    )
+
+
+def remove_owned_trust(root: Path, pem: Path, fingerprint: str) -> CommandResult:
+    snapshot = trust_settings(root, "remove-before", admin=True)
+    if fingerprint not in snapshot.fingerprints:
+        return CommandResult(0, "", "")
+    removed = command(
+        "sudo", "-n", "/usr/bin/security", "remove-trusted-cert", "-d", pem
+    )
+    if removed.code:
+        return removed
+    after = trust_settings(root, "remove-after", admin=True)
+    if fingerprint in after.fingerprints:
+        return CommandResult(-1, "", "独占合成证书的管理员域信任仍存在")
+    return removed
 
 
 def certificate(root: Path, name: str, password: str) -> tuple[Path, Path, str]:
@@ -208,10 +236,11 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
     original_default = checked(
         "读取默认钥匙串", "security", "default-keychain", "-d", "user"
     )
-    original_trust = trust_settings(root, "before")
+    original_user_trust = trust_settings(root, "user-before")
+    original_admin_trust = trust_settings(root, "admin-before", admin=True)
     keychain = root / "owned.keychain-db"
     password = secrets.token_hex(32)
-    trusted_certificates: list[Path] = []
+    trusted_certificates: list[tuple[Path, str]] = []
     created = False
     original_sigterm = signal.getsignal(signal.SIGTERM)
 
@@ -246,6 +275,8 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
             pem, container, fingerprint = certificate(
                 root, f"TF-sign-{role}-{uuid4().hex[:12]}", password
             )
+            assert fingerprint not in original_user_trust.fingerprints
+            assert fingerprint not in original_admin_trust.fingerprints
             checked(
                 "导入合成身份",
                 "security",
@@ -259,11 +290,15 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
                 "/usr/bin/codesign",
                 password=password,
             )
-            trusted_certificates.append(pem)
+            trusted_certificates.append((pem, fingerprint))
+            # SecTrustSettings.h 的 Authentication 契约：用户域需要 GUI；管理员域 root 无需弹窗
             checked(
                 "信任合成签名证书",
-                "security",
+                "sudo",
+                "-n",
+                "/usr/bin/security",
                 "add-trusted-cert",
+                "-d",
                 "-r",
                 "trustRoot",
                 "-p",
@@ -310,12 +345,8 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
                 builder.sign(app, identity, root, keychain=keychain, timestamp=False)
         # 用户端不安装签名证书；验收前先撤回构建机信任和搜索路径，验证包内身份自足
         while trusted_certificates:
-            checked(
-                "撤回构建用证书信任",
-                "security",
-                "remove-trusted-cert",
-                trusted_certificates[-1],
-            )
+            removed = remove_owned_trust(root, *trusted_certificates[-1])
+            assert removed.code == 0, removed.stderr
             trusted_certificates.pop()
         checked(
             "恢复构建前搜索清单",
@@ -326,16 +357,23 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
             "-s",
             *shlex.split(original_search),
         )
-        assert trust_settings(root, "before-verification") == original_trust
+        assert trust_settings(root, "user-before-verification") == original_user_trust
+        assert (
+            trust_settings(root, "admin-before-verification", admin=True)
+            == original_admin_trust
+        )
         yield SigningApps(
             a, b, c, keychain, "com.tinkerfin.signing-test." + uuid4().hex
         )
     finally:
         failures = []
-        for pem in trusted_certificates:
-            result = command("security", "remove-trusted-cert", pem)
-            if result.code:
-                failures.append(f"撤回合成证书信任：{result.code} {result.stderr}")
+        for pem, fingerprint in trusted_certificates:
+            try:
+                result = remove_owned_trust(root, pem, fingerprint)
+                if result.code:
+                    failures.append(f"撤回合成证书信任：{result.code} {result.stderr}")
+            except (AssertionError, OSError, ValueError) as error:
+                failures.append(f"核对合成证书信任失败：{error}")
         if created or keychain.exists():
             result = command(
                 "security",
@@ -363,8 +401,10 @@ def signing_apps(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SigningAp
         ):
             failures.append("默认钥匙串发生变化")
         try:
-            if trust_settings(root, "after") != original_trust:
+            if trust_settings(root, "user-after") != original_user_trust:
                 failures.append("用户域证书信任未恢复")
+            if trust_settings(root, "admin-after", admin=True) != original_admin_trust:
+                failures.append("管理员域证书信任未恢复")
         finally:
             signal.signal(signal.SIGTERM, original_sigterm)
             shutil.rmtree(root)
