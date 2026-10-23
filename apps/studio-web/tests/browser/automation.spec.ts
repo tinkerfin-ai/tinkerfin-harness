@@ -966,7 +966,9 @@ test('触控环境保留普通会话权限选择，自动化创建与详情操�
     const editor = page.getByRole('dialog', { name: '新建定时任务', exact: true })
     await expect(editor.getByRole('button', { name: '选择访问权限' })).toHaveCount(0)
     for (const name of ['创建任务', '关闭对话框']) {
-      const box = await editor.getByRole('button', { name, exact: true }).boundingBox()
+      const button = editor.getByRole('button', { name, exact: true })
+      await expect(button).toBeVisible()
+      const box = await button.boundingBox()
       expect(box!.width).toBeGreaterThanOrEqual(44)
       expect(box!.height).toBeGreaterThanOrEqual(44)
     }
@@ -975,7 +977,9 @@ test('触控环境保留普通会话权限选择，自动化创建与详情操�
     await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报/ }).first().tap()
     const detail = page.getByRole('dialog', { name: '每日 AI 新闻简报', exact: true })
     for (const name of ['查看关联会话', '关闭对话框']) {
-      const box = await detail.getByRole('button', { name, exact: true }).boundingBox()
+      const button = detail.getByRole('button', { name, exact: true })
+      await expect(button).toBeVisible()
+      const box = await button.boundingBox()
       expect(box!.width).toBeGreaterThanOrEqual(44)
       expect(box!.height).toBeGreaterThanOrEqual(44)
     }
