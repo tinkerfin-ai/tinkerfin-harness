@@ -71,6 +71,26 @@ struct NativeContracts {
                 catch ApplicationLockError.alreadyRunning { }
                 await duplicate.shutdown(); await model.shutdown()
             } catch { await model.shutdown(); throw error }
+        } else if mode == "update-completion" {
+            let state = directory.appendingPathComponent("state")
+            var saved = SavedConfiguration()
+            saved.keychainAccount = UUID().uuidString.lowercased()
+            saved.connection = ConnectionConfiguration(studioURL: "http://127.0.0.1:1", apiURL: "http://127.0.0.1:1")
+            saved.device = PairedDevice(deviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", namespace: "ns_test", name: "Contract Mac")
+            try await ConfigurationStore(directory: state).save(saved)
+            let model = CompanionModel(state: state, resources: directory)
+            let presentation = DesktopPresentation(model: model)
+            let updater = DesktopUpdateController(presentation: presentation, resources: directory)
+            do {
+                try await model.restore(connect: false)
+                let configuration = try Data(contentsOf: state.appendingPathComponent("settings.json"))
+                presentation.update = DesktopUpdateState(phase: .success)
+                let reply = await updater.handle(.updateCancel)
+                try require(reply.ok && presentation.update.phase == .idle, "离线更新完成确认没有关闭弹窗")
+                try require(model.connection == "offline", "更新完成确认触发了重新连接")
+                try require(try Data(contentsOf: state.appendingPathComponent("settings.json")) == configuration, "更新完成确认改变了已保存配置")
+                await updater.close(); presentation.close(); await model.shutdown()
+            } catch { await updater.close(); presentation.close(); await model.shutdown(); throw error }
         } else if mode == "update-workspace" {
             try await updateWorkspaceContract(directory)
         } else if mode == "update-installation" {
@@ -876,6 +896,22 @@ func updateWorkspaceContract(_ input: URL) async throws {
     }
     let privateRoot = base.appendingPathComponent("private", isDirectory: true)
     try manager.createDirectory(at: privateRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let receipt = privateRoot.appendingPathComponent("receipt.json")
+    for value in [["first"], ["replacement"]] {
+        try UpdateWorkspace.write(value, to: receipt)
+        try require(try JSONDecoder().decode([String].self, from: UpdateWorkspace.read(receipt, limit: 4096)) == value, "更新回执未完整发布")
+        let attributes = try manager.attributesOfItem(atPath: receipt.path)
+        try require((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600, "更新回执发布时权限不正确")
+    }
+    let blocked = privateRoot.appendingPathComponent("retained", isDirectory: true)
+    try manager.createDirectory(at: blocked, withIntermediateDirectories: false)
+    let retained = blocked.appendingPathComponent("user.txt")
+    try Data("retained".utf8).write(to: retained)
+    let entries = try manager.contentsOfDirectory(atPath: privateRoot.path).sorted()
+    do { try UpdateWorkspace.write(["rejected"], to: blocked); throw ClientError.message("更新回执覆盖了目录") }
+    catch UpdateError.invalidLocation { }
+    try require(try manager.contentsOfDirectory(atPath: privateRoot.path).sorted() == entries, "回执失败遗留了临时文件")
+    try require(try Data(contentsOf: retained) == Data("retained".utf8), "回执失败改动了已有目录")
     let link = base.appendingPathComponent("link", isDirectory: true)
     try manager.createSymbolicLink(at: link, withDestinationURL: privateRoot)
     for root in [link, link.appendingPathComponent("updates", isDirectory: true)] {

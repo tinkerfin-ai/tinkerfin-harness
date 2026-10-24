@@ -37,6 +37,24 @@ async def test_native_first_update_workspace_privacy_cleanup_and_failure_reasons
         await process.wait()
 
 
+async def test_update_completion_closes_without_reconnecting(swift_contracts, tmp_path):
+    process = await asyncio.create_subprocess_exec(
+        str(swift_contracts),
+        "update-completion",
+        str(tmp_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert stdout.decode().strip() == "verified update-completion"
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+
+
 @pytest.fixture(scope="module")
 def archive_tools():
     path = Path(__file__).resolve().parents[1] / "scripts/update_archive.py"

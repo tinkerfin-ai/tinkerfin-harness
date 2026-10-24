@@ -198,8 +198,21 @@ enum UpdateWorkspace {
     static func write<T: Encodable>(_ value: T, to path: URL) throws {
         let data = try JSONEncoder().encode(value)
         guard data.count <= 64 * 1024 else { throw UpdateError.invalidLocation }
-        try data.write(to: path, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        // 接收方看到回执即可删除目录，权限和写入必须在原子发布前完成
+        let temporary = path.deletingLastPathComponent().appendingPathComponent(".update-\(UUID().uuidString).tmp")
+        let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw UpdateError.invalidLocation }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            guard fchmod(descriptor, 0o600) == 0 else { throw UpdateError.invalidLocation }
+            try handle.write(contentsOf: data)
+            try handle.close()
+            guard rename(temporary.path, path.path) == 0 else { throw UpdateError.invalidLocation }
+        } catch {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
     }
 
     static func read(_ path: URL, limit: Int) throws -> Data {
