@@ -32,9 +32,11 @@ final class DesktopUpdateController {
         do {
             switch command {
             case .checkUpdate(let view):
-                guard presentation.update.phase == .idle, presentation.canCheckUpdates, operation == nil else { return DesktopReply(ok: false) }
+                guard presentation.update.phase == .idle, presentation.canCheckUpdates, operation == nil,
+                      restored == nil, !acknowledging else { return DesktopReply(ok: false) }
                 try UpdateWorkspace.checkInstallationLocation(Bundle.main.bundleURL, state: model.stateDirectory)
                 try presentation.preserve(view); try model.beginUpdateSession()
+                installed = false
                 set(.checking); launch { await self.check() }
             case .updateConfirm:
                 guard presentation.update.phase == .available, operation == nil else { return DesktopReply(ok: false) }
@@ -52,6 +54,8 @@ final class DesktopUpdateController {
                 default: return DesktopReply(ok: false)
                 }
             case .updateCancel:
+                // 完成确认不再接管已交给启动回执和安装助手的清理，也不触发连接恢复
+                if presentation.update.phase == .success { set(.idle); return DesktopReply(ok: true) }
                 guard !presentation.update.phase.locked, presentation.update.phase != .idle else { return DesktopReply(ok: false) }
                 if presentation.update.phase == .restartError {
                     quit?(); return DesktopReply(ok: true)
@@ -263,21 +267,22 @@ final class DesktopUpdateController {
         self.interfaceReady = self.interfaceReady || interfaceReady
         guard self.interfaceReady, model.ready, let restored, !acknowledging else { return }
         acknowledging = true
+        defer { acknowledging = false }
         do {
             let receipt = UpdateLaunchReceipt(identifier: restored.identifier, version: version, processID: ProcessInfo.processInfo.processIdentifier)
             let ownedLock = installationLock
             try await files.perform { _ in
+                // 回执可让助手立即删目录并退出，发布前固定本进程是否负责清理
+                let lock = try ownedLock ?? (UpdateTargetLock.isBusy(application: restored.target) ? nil : UpdateTargetLock(application: restored.target))
                 try UpdateWorkspace.write(receipt, to: restored.directory.appendingPathComponent("launched.json"))
-                // 助手仍持锁时保留pending；它退出后任一新进程都能接管尚未完成的清理
-                if try ownedLock != nil || !UpdateTargetLock.isBusy(application: restored.target) {
-                    let lock = try ownedLock ?? UpdateTargetLock(application: restored.target)
+                if let lock {
                     try UpdateWorkspace.remove(restored.directory, root: restored.directory.deletingLastPathComponent())
                     withExtendedLifetime(lock) {}
                 }
             }
             self.restored = nil
-            if ownedLock != nil { directory = nil; installationLock = nil }
-        } catch { acknowledging = false; NSLog("TinkerFin 更新启动回执未保存") }
+            directory = nil; installationLock = nil
+        } catch { NSLog("TinkerFin 更新启动回执未保存") }
     }
 
     func close() async {

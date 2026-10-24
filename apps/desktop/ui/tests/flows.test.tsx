@@ -250,6 +250,23 @@ describe('桌面真实动作边界', () => {
 })
 
 describe('更新阶段与恢复', () => {
+  it('完成确认等待原生快照后关闭弹窗并恢复导航', async () => {
+    let finish!: (result: ActionResult) => void
+    const confirmation = new Promise<ActionResult>(resolve => { finish = resolve })
+    const { state, calls } = await mount({ update: { ...fixture().update, phase: 'success' } }, action =>
+      action.type === 'update-cancel' ? confirmation : Promise.resolve({ ok: true }))
+    await click('完成')
+    expect(calls).toHaveBeenCalledWith({ type: 'update-cancel' })
+    expect(screen.getByRole('button', { name: '完成' })).toBeDisabled()
+    await act(async () => {
+      publish({ ...state, update: { ...state.update, phase: 'idle' } })
+      finish({ ok: true })
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await click('我的')
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled()
+  })
+
   const cases: [UpdatePhase, string, boolean][] = [
     ['checking', '正在检查更新', false], ['available', '检测到新版本 0.1.2', false], ['latest', '已是最新版本', false], ['check-error', '检查更新失败', false],
     ['downloading', '正在下载更新', false], ['download-error', '下载失败', false], ['verifying', '正在校验安装包', false], ['verify-error', '校验失败', false],
