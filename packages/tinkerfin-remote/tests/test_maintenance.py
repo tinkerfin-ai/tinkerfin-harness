@@ -149,15 +149,22 @@ async def test_maintenance_keeps_delivery_for_accepted_upload(tmp_path: Path):
     entering, entered, leave = asyncio.Event(), asyncio.Event(), asyncio.Event()
     wire = harness.connect()
     original_send = wire.send_cloud
+    deferred: CoordinatorFrame | None = None
 
     async def hold_chunks(payload: str):
+        nonlocal deferred
         frame = CoordinatorFrame.model_validate_json(payload)
-        if frame.chunks:
+        # Holding file bytes must not stop the command receipts that release them.
+        if frame.chunks and not release_chunks.is_set():
+            if deferred is None:
+                deferred = frame
+            else:
+                assert deferred.chunks == frame.chunks
             await original_send(
                 frame.model_copy(update={"chunks": ()}).model_dump_json()
             )
             chunks_ready.set()
-            await release_chunks.wait()
+            return
         await original_send(payload)
 
     # Attach the same public transport with a controlled upload boundary.
@@ -213,6 +220,8 @@ async def test_maintenance_keeps_delivery_for_accepted_upload(tmp_path: Path):
         await entering.wait()
         assert not entered.is_set()
         release_chunks.set()
+        assert deferred is not None
+        await original_send(deferred.model_dump_json())
         assert (await uploading)[0].error is None
         await entered.wait()
         assert harness.files.files["/workspace/upload"] == b"content"
